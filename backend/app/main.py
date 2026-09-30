@@ -298,8 +298,8 @@ def student_login(
         key=STUDENT_COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="lax",
-        secure=False,
+        samesite="none",
+secure=True,
 max_age=8 * 60 * 60,    )
     return {"authenticated": True, "student": student_profile(database, student)}
 
