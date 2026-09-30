@@ -1,11 +1,12 @@
 import secrets
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
-
 
 from app import models
 from app.database import Base, engine, get_database
@@ -51,8 +52,6 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
-        "https://hostel-management-web.onrender.com",
-        
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -223,7 +222,7 @@ def login(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="none",
+        samesite="lax",
         secure=True,
 max_age=8 * 60 * 60,    )
     return {
@@ -299,8 +298,8 @@ def student_login(
         key=STUDENT_COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="none",
-secure=True,
+        samesite="lax",
+        secure=True,
 max_age=8 * 60 * 60,    )
     return {"authenticated": True, "student": student_profile(database, student)}
 
@@ -1240,3 +1239,23 @@ def review_guardian_link(
         guardian.face_status = "verified"
     database.commit()
     return {"id": link.id, "status": link.status}
+
+
+# In production the FastAPI service also serves the built React application.
+# Keeping the UI and API on one HTTPS address makes authenticated sessions work
+# consistently on every device and supports refreshing any React route.
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def serve_frontend(full_path: str):
+    if FRONTEND_DIST.exists() and full_path:
+        requested_file = (FRONTEND_DIST / full_path).resolve()
+        if requested_file.is_relative_to(FRONTEND_DIST) and requested_file.is_file():
+            return FileResponse(requested_file)
+
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.is_file():
+        return FileResponse(index_file)
+
+    raise HTTPException(status_code=404, detail="Frontend build not found")
