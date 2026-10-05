@@ -574,12 +574,22 @@ function FaceCapture({ label, onCapture }: { label: string; onCapture: (image: s
   const [captured, setCaptured] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (running && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => undefined);
+    }
+    return () => {
+      if (!running) return;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, [running]);
+
   async function startCamera() {
     setError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
       streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
       setRunning(true);
     } catch {
       setError("Camera permission was denied or this device has no camera.");
