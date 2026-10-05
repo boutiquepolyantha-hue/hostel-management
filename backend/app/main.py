@@ -46,6 +46,8 @@ with engine.begin() as connection:
         connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
     if "is_active" not in guardian_columns:
         connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+    if "relationship" not in guardian_columns:
+        connection.execute(text("ALTER TABLE guardians ADD COLUMN relationship VARCHAR(40) DEFAULT ''"))
     student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)"))}
     if "face_image" not in student_columns:
         connection.execute(text("ALTER TABLE students ADD COLUMN face_image TEXT"))
@@ -275,8 +277,8 @@ def create_admin_student(
         university_id=payload.university_id.strip(),
         full_name=payload.full_name.strip(),
         email=payload.email.strip().lower(),
-        phone="",
-        city="",
+        phone=payload.phone.strip(),
+        city=payload.city.strip(),
         building_id=payload.building_id,
         room_number=payload.room_number.strip(),
         current_status="inside",
@@ -315,7 +317,8 @@ def create_admin_guardian(
         emirates_id=payload.emirates_id.strip(),
         email=payload.email.strip().lower(),
         phone=payload.phone.strip(),
-        city="",
+        city=payload.city.strip(),
+        relationship=payload.relationship.strip(),
         password_hash=hash_password(payload.password),
         is_active=payload.is_active,
         face_image=payload.face_image,
@@ -332,6 +335,8 @@ def create_admin_guardian(
             "emirates_id": guardian.emirates_id,
             "email": guardian.email,
             "phone": guardian.phone,
+            "city": guardian.city,
+            "relationship": guardian.relationship,
             "is_active": guardian.is_active,
             "face_status": guardian.face_status,
         }

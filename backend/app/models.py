@@ -90,6 +90,7 @@ class Guardian(Base):
     email: Mapped[str] = mapped_column(String(160), unique=True)
     phone: Mapped[str] = mapped_column(String(30))
     city: Mapped[str] = mapped_column(String(80))
+    relationship: Mapped[str] = mapped_column(String(40), default="")
     password_hash: Mapped[str] = mapped_column(String(255), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Enrollment image captured by the student for the guardian's later kiosk match.

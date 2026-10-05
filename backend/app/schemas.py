@@ -11,6 +11,8 @@ class AdminStudentCreate(BaseModel):
     university_id: str = Field(min_length=2, max_length=30)
     email: str = Field(min_length=5, max_length=160)
     password: str = Field(min_length=8, max_length=200)
+    phone: str = Field(min_length=5, max_length=30)
+    city: str = Field(min_length=2, max_length=80)
     building_id: int
     room_number: str = Field(min_length=1, max_length=20)
     is_active: bool = True
@@ -23,6 +25,8 @@ class AdminGuardianCreate(BaseModel):
     email: str = Field(min_length=5, max_length=160)
     password: str = Field(min_length=8, max_length=200)
     phone: str = Field(min_length=5, max_length=30)
+    city: str = Field(min_length=2, max_length=80)
+    relationship: str = Field(min_length=2, max_length=40)
     is_active: bool = True
     face_image: str | None = Field(default=None, max_length=4_000_000)
 

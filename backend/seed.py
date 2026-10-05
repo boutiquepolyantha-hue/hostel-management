@@ -55,7 +55,7 @@ CREATE TABLE guardians (
  id INTEGER PRIMARY KEY, guardian_code VARCHAR(30) NOT NULL UNIQUE,
  full_name VARCHAR(120) NOT NULL, emirates_id VARCHAR(40) NOT NULL UNIQUE,
  email VARCHAR(160) NOT NULL UNIQUE, phone VARCHAR(30) NOT NULL,
- city VARCHAR(80) NOT NULL, face_image TEXT, face_status VARCHAR(30) NOT NULL,
+ city VARCHAR(80) NOT NULL, relationship VARCHAR(40) NOT NULL DEFAULT '', face_image TEXT, face_status VARCHAR(30) NOT NULL,
  identity_match INTEGER NOT NULL);
 CREATE TABLE guardian_student_links (
  id INTEGER PRIMARY KEY, guardian_id INTEGER NOT NULL REFERENCES guardians(id),
@@ -167,13 +167,14 @@ def seed() -> None:
             )
             face_status = "failed" if local_index in {8, 151} else "verified"
             cursor.execute(
-                "INSERT INTO guardians VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO guardians VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item_id, f"G-{20000 + item_id}", guardian_name,
                     f"784-1990-{1000000 + item_id:07d}-1",
                     f"guardian.{item_id}@example.local",
                     f"055{2000000 + item_id:07d}",
                     CITIES[(global_index + 2) % len(CITIES)],
+                    RELATIONSHIPS[global_index % len(RELATIONSHIPS)],
                     "seed-face-enrollment",
                     face_status, random.randint(91, 99),
                 ),

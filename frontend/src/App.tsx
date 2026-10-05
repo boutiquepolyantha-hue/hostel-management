@@ -453,6 +453,8 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     university_id: "",
     email: "",
     password: "",
+    phone: "",
+    city: "",
     building_id: String(buildingId),
     room_number: "",
     is_active: true,
@@ -464,6 +466,8 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     email: "",
     password: "",
     phone: "",
+    city: "",
+    relationship: "",
     is_active: true,
     face_image: null as string | null,
   });
@@ -496,7 +500,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
         body: JSON.stringify({ ...student, building_id: Number(student.building_id) }),
       });
       setMessage("Student account created. Face enrollment can be completed next.");
-      setStudent((current) => ({ ...current, full_name: "", university_id: "", email: "", password: "", room_number: "", face_image: null }));
+      setStudent((current) => ({ ...current, full_name: "", university_id: "", email: "", password: "", phone: "", city: "", room_number: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
     } finally {
@@ -515,7 +519,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     try {
       await api("/admin/guardians", { method: "POST", body: JSON.stringify(guardian) });
       setMessage("Guardian account created. Relationship approval and face enrollment are separate steps.");
-      setGuardian((current) => ({ ...current, full_name: "", emirates_id: "", email: "", password: "", phone: "", face_image: null }));
+      setGuardian((current) => ({ ...current, full_name: "", emirates_id: "", email: "", password: "", phone: "", city: "", relationship: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
     } finally {
@@ -540,6 +544,8 @@ function UserManagement({ buildingId }: { buildingId: number }) {
             <label>University ID<input required value={student.university_id} onChange={(event) => setStudent({ ...student, university_id: event.target.value })} /></label>
             <label>Email<input required type="email" value={student.email} onChange={(event) => setStudent({ ...student, email: event.target.value })} /></label>
             <label>Password<input required minLength={8} type="password" value={student.password} onChange={(event) => setStudent({ ...student, password: event.target.value })} /></label>
+            <label>Phone number<input required type="tel" value={student.phone} onChange={(event) => setStudent({ ...student, phone: event.target.value })} placeholder="+971 50 123 4567" /></label>
+            <label>UAE city<select required value={student.city} onChange={(event) => setStudent({ ...student, city: event.target.value })}><option value="">Select city</option>{UAE_CITIES.map((city) => <option key={city}>{city}</option>)}</select></label>
             <label>Building<select required value={student.building_id} onChange={(event) => setStudent({ ...student, building_id: event.target.value })}>{buildings.map((building) => <option key={building.id} value={building.id}>{building.name} ({building.code})</option>)}</select></label>
             <label>Room number<input required value={student.room_number} onChange={(event) => setStudent({ ...student, room_number: event.target.value })} /></label>
           </div>
@@ -556,6 +562,8 @@ function UserManagement({ buildingId }: { buildingId: number }) {
             <label>Email<input required type="email" value={guardian.email} onChange={(event) => setGuardian({ ...guardian, email: event.target.value })} /></label>
             <label>Password<input required minLength={8} type="password" value={guardian.password} onChange={(event) => setGuardian({ ...guardian, password: event.target.value })} /></label>
             <label>Phone<input required type="tel" value={guardian.phone} onChange={(event) => setGuardian({ ...guardian, phone: event.target.value })} /></label>
+            <label>UAE city<select required value={guardian.city} onChange={(event) => setGuardian({ ...guardian, city: event.target.value })}><option value="">Select city</option>{UAE_CITIES.map((city) => <option key={city}>{city}</option>)}</select></label>
+            <label>Relationship to student<input required value={guardian.relationship} onChange={(event) => setGuardian({ ...guardian, relationship: event.target.value })} placeholder="Mother, father, uncle…" /></label>
           </div>
           <FaceCapture label="Guardian face enrollment" onCapture={(face_image) => setGuardian({ ...guardian, face_image })} />
           <label className="checkbox-field"><input type="checkbox" checked={guardian.is_active} onChange={(event) => setGuardian({ ...guardian, is_active: event.target.checked })} /> Active guardian account</label>
