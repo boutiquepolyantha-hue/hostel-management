@@ -108,11 +108,6 @@ function parseUtcTimestamp(value: string) {
   return new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`);
 }
 
-function PhoneLink({ phone }: { phone?: string | null }) {
-  if (!phone) return <span>—</span>;
-  return <a className="phone-link" href={`tel:${phone.replace(/[^\d+]/g, "")}`}>{phone}</a>;
-}
-
 function StudentLoading() {
   return (
     <main className="student-mobile-shell student-center">
@@ -585,7 +580,7 @@ function StudentProfilePage({
           <div><h2>{student.full_name}</h2><StatusPill text="Active Student" /><p>{student.university_id}<br />{student.email}</p></div>
         </section>
         <ProfileSection title="Personal Information" rows={[
-          ["Mobile number", <PhoneLink phone={student.phone} />],
+          ["Mobile number", student.phone],
           ["UAE city", student.city],
         ]} />
         <ProfileSection title="Residence Information" rows={[
@@ -598,7 +593,7 @@ function StudentProfilePage({
           {student.guardian ? (
             <div className="profile-guardian">
               <ShieldCheck />
-              <div><strong>{student.guardian.full_name}</strong><p>{student.guardian.relationship}<br /><PhoneLink phone={student.guardian.phone} /></p></div>
+              <div><strong>{student.guardian.full_name}</strong><p>{student.guardian.relationship}<br />{student.guardian.phone}</p></div>
               <StatusPill text="Relationship approved" />
             </div>
           ) : <p>No approved guardian.</p>}
@@ -664,7 +659,7 @@ function GuardianManagementPage({ student }: { student: StudentProfileData }) {
     <section className="guardian-notice"><CheckCircle2 /><div><strong>Supervisor approval required</strong><p>New guardians remain pending until their details, relationship, and face enrollment are reviewed.</p></div></section>
     <div className="guardian-management-layout"><section className="student-white-card">
       <h2>Your guardians</h2>
-      {guardians.length ? <div className="guardian-list">{guardians.map(guardian => <div className="profile-guardian" key={guardian.id}><ShieldCheck /><div><strong>{guardian.full_name}</strong><p>{guardian.relationship} · <PhoneLink phone={guardian.phone} /><br />Face enrollment: {guardian.face_enrolled ? "captured" : "missing"}</p></div><StatusPill text={guardian.status === "approved" ? "Approved" : guardian.status === "rejected" ? "Rejected" : "Pending approval"} /></div>)}</div> : <p>No guardians added yet.</p>}
+      {guardians.length ? <div className="guardian-list">{guardians.map(guardian => <div className="profile-guardian" key={guardian.id}><ShieldCheck /><div><strong>{guardian.full_name}</strong><p>{guardian.relationship} · {guardian.phone}<br />Face enrollment: {guardian.face_enrolled ? "captured" : "missing"}</p></div><StatusPill text={guardian.status === "approved" ? "Approved" : guardian.status === "rejected" ? "Rejected" : "Pending approval"} /></div>)}</div> : <p>No guardians added yet.</p>}
     </section>
     <section className="student-white-card guardian-request-form">
       <h2><UserPlus /> Add new guardian</h2><p>Capture the guardian’s face now; it is enrolled for their later face-only kiosk sign-in.</p>
@@ -679,7 +674,7 @@ function GuardianManagementPage({ student }: { student: StudentProfileData }) {
 }
 
 
-function ProfileSection({ title, rows }: { title: string; rows: Array<[string, ReactNode]> }) {
+function ProfileSection({ title, rows }: { title: string; rows: string[][] }) {
   return (
     <section className="student-white-card profile-section">
       <h2>{title}</h2>

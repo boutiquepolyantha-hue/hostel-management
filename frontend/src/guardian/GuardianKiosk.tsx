@@ -17,11 +17,6 @@ interface Guardian {
   id: number; guardian_code: string; full_name: string; phone: string;
   identity_match: number; students: LinkedStudent[];
 }
-
-function PhoneLink({ phone }: { phone?: string | null }) {
-  if (!phone) return <span>—</span>;
-  return <a className="phone-link" href={`tel:${phone.replace(/[^\d+]/g, "")}`}>{phone}</a>;
-}
 interface BatchResult {
   request_reference: string; guardian_name: string; action: Action;
   requests: { id: number; student_name: string; university_id: string; status: string }[];
@@ -134,7 +129,7 @@ export function GuardianKiosk() {
 
       {step === 2 && guardian && <section className="gk-stage">
         <div className="gk-approved"><CheckCircle2 /> Face Verification Approved</div>
-        <article className="guardian-profile"><div className="gk-avatar">{guardian.full_name.split(" ").map(x => x[0]).join("")}</div><div><h2>{guardian.full_name}</h2><p>Guardian ID: {guardian.guardian_code}</p><p>Mobile: <PhoneLink phone={guardian.phone} /></p></div><span><CheckCircle2 /> Identity Verified · {guardian.identity_match}%</span></article>
+        <article className="guardian-profile"><div className="gk-avatar">{guardian.full_name.split(" ").map(x => x[0]).join("")}</div><div><h2>{guardian.full_name}</h2><p>Guardian ID: {guardian.guardian_code}</p><p>Mobile: {guardian.phone}</p></div><span><CheckCircle2 /> Identity Verified · {guardian.identity_match}%</span></article>
         <h1>Select Students</h1><p>Choose one or more linked students for dorm access.</p>
         <div className="gk-info">Only students linked to your approved guardian profile are shown.</div>
         <div className="student-picker">{guardian.students.map(student => <button className={selected.includes(student.id) ? "selected" : ""} key={student.id} onClick={() => toggle(student.id)}>
