@@ -1230,7 +1230,8 @@ def bus_passengers(
             **student_dict(student),
             "passenger_id": passenger.id,
             "boarding_status": passenger.status,
-            "verification_method": passenger.verification_method,
+            # Bus boarding uses the student's card/QR scan, not face verification.
+            "verification_method": "card_verification" if passenger.verification_method else None,
             "boarded_at": (
                 passenger.boarded_at.isoformat() if passenger.boarded_at else None
             ),
