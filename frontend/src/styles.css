@@ -129,6 +129,8 @@ input, textarea {
   background: #fff;
 }
 input:focus, textarea:focus { outline: 3px solid rgba(11,99,229,.14); border-color: #0b63e5; }
+.phone-link { color: #075dcc; font-weight: 750; text-decoration: none; }
+.phone-link:hover { text-decoration: underline; }
 .primary-button, .secondary-button, .reject-button {
   min-height: 46px;
   border-radius: 9px;
@@ -235,6 +237,14 @@ input:focus, textarea:focus { outline: 3px solid rgba(11,99,229,.14); border-col
 .form-grid select { width: 100%; border: 1px solid #ccd8e8; border-radius: 10px; padding: 13px 14px; color: #102655; background: #fff; }
 .checkbox-field { display: flex; align-items: center; gap: 9px; margin: 22px 0; color: #294568; font-weight: 700; }
 .checkbox-field input { width: 18px; height: 18px; }
+.face-capture-card { margin: 24px 0; padding: 18px; border: 1px dashed #9ec9f7; border-radius: 13px; background: #f7fbff; }
+.face-capture-heading { display: flex; gap: 10px; align-items: flex-start; color: #0b63d9; }
+.face-capture-heading > div { display: grid; gap: 4px; }
+.face-capture-heading span { color: #64748b; font-size: .88rem; font-weight: 400; }
+.face-video { display: block; width: min(420px, 100%); aspect-ratio: 4 / 3; object-fit: cover; margin: 16px 0; border-radius: 10px; background: #0b2253; transform: scaleX(-1); }
+.face-capture-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.face-captured { color: #08753f; font-weight: 750; }
+.face-capture-error { color: #bd1732; margin: 12px 0 0; }
 @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } .user-form-card { padding: 20px; } }
 .sidebar nav { display: grid; gap: 6px; }
 .sidebar button { border: 0; background: transparent; color: #324c77; border-radius: 9px; padding: 11px 9px; display: flex; align-items: center; gap: 11px; text-align: left; font-weight: 650; font-size: .82rem; }

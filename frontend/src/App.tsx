@@ -4,6 +4,7 @@ import {
   Building2,
   Bus,
   CalendarDays,
+  Camera,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -19,7 +20,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { api } from "./api";
@@ -63,6 +64,11 @@ function StatusBadge({ value }: { value: string }) {
       {value.replaceAll("_", " ")}
     </span>
   );
+}
+
+function PhoneLink({ phone }: { phone?: string | null }) {
+  if (!phone) return <span>—</span>;
+  return <a className="phone-link" href={`tel:${phone.replace(/[^\d+]/g, "")}`} onClick={(event) => event.stopPropagation()}>{phone}</a>;
 }
 
 
@@ -141,7 +147,7 @@ function PortalHome() {
             <div className="portal-picture"><ShieldCheck size={96} strokeWidth={1.2} /></div>
             <h2>Guardian</h2>
             <p>Face identification and authorized student check-in or check-out.</p>
-            <span>Open guardian kiosk <ChevronRight size={18} /></span>
+            <span>Guardian login <ChevronRight size={18} /></span>
           </button>
         </div>
       </section>
@@ -450,6 +456,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     building_id: String(buildingId),
     room_number: "",
     is_active: true,
+    face_image: null as string | null,
   });
   const [guardian, setGuardian] = useState({
     full_name: "",
@@ -458,6 +465,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     password: "",
     phone: "",
     is_active: true,
+    face_image: null as string | null,
   });
 
   useEffect(() => {
@@ -477,6 +485,10 @@ function UserManagement({ buildingId }: { buildingId: number }) {
   async function submitStudent(event: FormEvent) {
     event.preventDefault();
     resetMessages();
+    if (!student.face_image) {
+      setError("Capture the student's face before creating the account.");
+      return;
+    }
     setSaving(true);
     try {
       await api("/admin/students", {
@@ -484,7 +496,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
         body: JSON.stringify({ ...student, building_id: Number(student.building_id) }),
       });
       setMessage("Student account created. Face enrollment can be completed next.");
-      setStudent((current) => ({ ...current, full_name: "", university_id: "", email: "", password: "", room_number: "" }));
+      setStudent((current) => ({ ...current, full_name: "", university_id: "", email: "", password: "", room_number: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
     } finally {
@@ -495,11 +507,15 @@ function UserManagement({ buildingId }: { buildingId: number }) {
   async function submitGuardian(event: FormEvent) {
     event.preventDefault();
     resetMessages();
+    if (!guardian.face_image) {
+      setError("Capture the guardian's face before creating the account.");
+      return;
+    }
     setSaving(true);
     try {
       await api("/admin/guardians", { method: "POST", body: JSON.stringify(guardian) });
       setMessage("Guardian account created. Relationship approval and face enrollment are separate steps.");
-      setGuardian((current) => ({ ...current, full_name: "", emirates_id: "", email: "", password: "", phone: "" }));
+      setGuardian((current) => ({ ...current, full_name: "", emirates_id: "", email: "", password: "", phone: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
     } finally {
@@ -527,6 +543,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
             <label>Building<select required value={student.building_id} onChange={(event) => setStudent({ ...student, building_id: event.target.value })}>{buildings.map((building) => <option key={building.id} value={building.id}>{building.name} ({building.code})</option>)}</select></label>
             <label>Room number<input required value={student.room_number} onChange={(event) => setStudent({ ...student, room_number: event.target.value })} /></label>
           </div>
+          <FaceCapture label="Student face enrollment" onCapture={(face_image) => setStudent({ ...student, face_image })} />
           <label className="checkbox-field"><input type="checkbox" checked={student.is_active} onChange={(event) => setStudent({ ...student, is_active: event.target.checked })} /> Active student account</label>
           <button className="primary-button" disabled={saving}>{saving ? "Creating…" : "Create student"}</button>
         </form>
@@ -540,11 +557,64 @@ function UserManagement({ buildingId }: { buildingId: number }) {
             <label>Password<input required minLength={8} type="password" value={guardian.password} onChange={(event) => setGuardian({ ...guardian, password: event.target.value })} /></label>
             <label>Phone<input required type="tel" value={guardian.phone} onChange={(event) => setGuardian({ ...guardian, phone: event.target.value })} /></label>
           </div>
+          <FaceCapture label="Guardian face enrollment" onCapture={(face_image) => setGuardian({ ...guardian, face_image })} />
           <label className="checkbox-field"><input type="checkbox" checked={guardian.is_active} onChange={(event) => setGuardian({ ...guardian, is_active: event.target.checked })} /> Active guardian account</label>
           <button className="primary-button" disabled={saving}>{saving ? "Creating…" : "Create guardian"}</button>
         </form>
       )}
     </section>
+  );
+}
+
+
+function FaceCapture({ label, onCapture }: { label: string; onCapture: (image: string | null) => void }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [running, setRunning] = useState(false);
+  const [captured, setCaptured] = useState(false);
+  const [error, setError] = useState("");
+
+  async function startCamera() {
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setRunning(true);
+    } catch {
+      setError("Camera permission was denied or this device has no camera.");
+    }
+  }
+
+  function capture() {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    onCapture(canvas.toDataURL("image/jpeg", 0.82));
+    setCaptured(true);
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    setRunning(false);
+  }
+
+  function clearCapture() {
+    onCapture(null);
+    setCaptured(false);
+  }
+
+  return (
+    <div className="face-capture-card">
+      <div className="face-capture-heading"><Camera size={21} /><div><strong>{label}</strong><span>Capture one clear face image with consent. This is stored as enrollment data.</span></div></div>
+      {running && <video ref={videoRef} autoPlay muted playsInline className="face-video" />}
+      <div className="face-capture-actions">
+        {!running && !captured && <button type="button" className="secondary-button" onClick={startCamera}><Camera size={17} /> Open camera</button>}
+        {running && <button type="button" className="primary-button" onClick={capture}>Capture face</button>}
+        {captured && <><span className="face-captured">Face captured</span><button type="button" className="secondary-button" onClick={clearCapture}>Capture again</button></>}
+      </div>
+      {error && <p className="face-capture-error">{error}</p>}
+    </div>
   );
 }
 
@@ -728,7 +798,7 @@ function StudentTable({
               <td>{row.email}</td>
               <td>B{row.building_id}</td>
               <td>{row.room_number}</td>
-              <td>{row.phone}</td>
+              <td><PhoneLink phone={row.phone} /></td>
               <td>{row.city}</td>
               <td>{formatRecordDate(row)}</td>
               {extraCells(row).map((cell, cellIndex) => (
@@ -1027,7 +1097,7 @@ function GuardianApprovals({ buildingId }: { buildingId: number }) {
                 <dl>
                   <dt>Guardian name</dt><dd>{selected.guardian.full_name}</dd>
                   <dt>Emirates ID</dt><dd>{selected.guardian.emirates_id}</dd>
-                  <dt>Mobile number</dt><dd>{selected.guardian.phone}</dd>
+                  <dt>Mobile number</dt><dd><PhoneLink phone={selected.guardian.phone} /></dd>
                   <dt>Email</dt><dd>{selected.guardian.email}</dd>
                   <dt>UAE city</dt><dd>{selected.guardian.city}</dd>
                   <dt>Face verification</dt><dd><StatusBadge value={selected.guardian.face_status} /></dd>
@@ -1042,7 +1112,7 @@ function GuardianApprovals({ buildingId }: { buildingId: number }) {
                 <dt>Building</dt><dd>B{selected.student.building_id}</dd>
                 <dt>Room</dt><dd>{selected.student.room_number}</dd>
                 <dt>Relationship</dt><dd>{selected.relationship}</dd>
-                <dt>Student contact</dt><dd>{selected.student.phone}</dd>
+                  <dt>Student contact</dt><dd><PhoneLink phone={selected.student.phone} /></dd>
               </dl>
               {selected.status === "pending" && (
                 <>

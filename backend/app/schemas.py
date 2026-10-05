@@ -14,6 +14,7 @@ class AdminStudentCreate(BaseModel):
     building_id: int
     room_number: str = Field(min_length=1, max_length=20)
     is_active: bool = True
+    face_image: str | None = Field(default=None, max_length=4_000_000)
 
 
 class AdminGuardianCreate(BaseModel):
@@ -23,6 +24,7 @@ class AdminGuardianCreate(BaseModel):
     password: str = Field(min_length=8, max_length=200)
     phone: str = Field(min_length=5, max_length=30)
     is_active: bool = True
+    face_image: str | None = Field(default=None, max_length=4_000_000)
 
 
 class RelationshipReview(BaseModel):

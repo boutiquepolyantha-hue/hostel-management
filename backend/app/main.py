@@ -46,6 +46,9 @@ with engine.begin() as connection:
         connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
     if "is_active" not in guardian_columns:
         connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+    student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)"))}
+    if "face_image" not in student_columns:
+        connection.execute(text("ALTER TABLE students ADD COLUMN face_image TEXT"))
 
 app = FastAPI(
     title="Hostel Access Management API",
@@ -278,6 +281,7 @@ def create_admin_student(
         room_number=payload.room_number.strip(),
         current_status="inside",
         is_active=payload.is_active,
+        face_image=payload.face_image,
     )
     database.add(student)
     database.flush()
@@ -314,7 +318,8 @@ def create_admin_guardian(
         city="",
         password_hash=hash_password(payload.password),
         is_active=payload.is_active,
-        face_status="not_enrolled",
+        face_image=payload.face_image,
+        face_status="enrolled" if payload.face_image else "not_enrolled",
         identity_match=0,
     )
     database.add(guardian)
