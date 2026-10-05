@@ -56,6 +56,7 @@ class Student(Base):
     room_number: Mapped[str] = mapped_column(String(20))
     current_status: Mapped[str] = mapped_column(String(20), default="inside")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    face_image: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class StudentCredential(Base):

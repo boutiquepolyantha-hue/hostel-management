@@ -1,4 +1,3 @@
-import random
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -18,7 +17,6 @@ from app.schemas import (
     GuardianRequestCreate,
     AdminGuardianCreate,
     AdminStudentCreate,
-    DemoTamamCreate,
     KioskScanRequest,
     LoginRequest,
     RelationshipReview,
@@ -48,6 +46,9 @@ with engine.begin() as connection:
         connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
     if "is_active" not in guardian_columns:
         connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+    student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)"))}
+    if "face_image" not in student_columns:
+        connection.execute(text("ALTER TABLE students ADD COLUMN face_image TEXT"))
 
 app = FastAPI(
     title="Hostel Access Management API",
@@ -280,6 +281,7 @@ def create_admin_student(
         room_number=payload.room_number.strip(),
         current_status="inside",
         is_active=payload.is_active,
+        face_image=payload.face_image,
     )
     database.add(student)
     database.flush()
@@ -316,7 +318,8 @@ def create_admin_guardian(
         city="",
         password_hash=hash_password(payload.password),
         is_active=payload.is_active,
-        face_status="not_enrolled",
+        face_image=payload.face_image,
+        face_status="enrolled" if payload.face_image else "not_enrolled",
         identity_match=0,
     )
     database.add(guardian)
@@ -333,71 +336,6 @@ def create_admin_guardian(
             "face_status": guardian.face_status,
         }
     }
-
-
-@app.post("/admin/demo/tamam")
-def create_demo_tamam(
-    payload: DemoTamamCreate,
-    supervisor: models.Supervisor = Depends(require_supervisor),
-    database: Session = Depends(get_database),
-):
-    """Add sample Daily Tamam rows for buildings 1 and 2 without deleting data."""
-    record_date = payload.record_date or date.today().isoformat()
-    try:
-        datetime.strptime(record_date, "%Y-%m-%d")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="record_date must be YYYY-MM-DD") from exc
-
-    for building_id in (1, 2):
-        building_or_404(database, building_id)
-        assert_assignment(database, supervisor, building_id)
-
-    rng = random.Random(f"tamam:{record_date}:{supervisor.id}")
-    created_by_building: dict[str, int] = {}
-    for building_id in (1, 2):
-        students = database.query(models.Student).filter(
-            models.Student.building_id == building_id,
-            models.Student.is_active.is_(True),
-        ).all()
-        existing_ids = {
-            row.student_id
-            for row in database.query(models.TamamRecord).filter(
-                models.TamamRecord.record_date == record_date,
-                models.TamamRecord.student_id.in_([student.id for student in students]),
-            ).all()
-        }
-        remaining = max(payload.count_per_building - len(existing_ids), 0)
-        if remaining == 0:
-            created_by_building[str(building_id)] = 0
-            continue
-        available = [student for student in students if student.id not in existing_ids]
-        if len(available) < remaining:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Building {building_id} has only {len(available)} students without a record for {record_date}",
-            )
-        rng.shuffle(available)
-        created = 0
-        for student in available[: remaining]:
-            completed = rng.random() < 0.8
-            completed_at = None
-            method = None
-            if completed:
-                completed_at = datetime.strptime(record_date, "%Y-%m-%d").replace(
-                    hour=19 + rng.randrange(0, 4), minute=rng.randrange(0, 60),
-                )
-                method = rng.choice(["face_verification", "fingerprint", "card_verification"])
-            database.add(models.TamamRecord(
-                student_id=student.id,
-                record_date=record_date,
-                status="completed" if completed else "not_completed",
-                verification_method=method,
-                completed_at=completed_at,
-            ))
-            created += 1
-        created_by_building[str(building_id)] = created
-    database.commit()
-    return {"record_date": record_date, "created_by_building": created_by_building}
 
 
 @app.post("/auth/logout")
