@@ -15,6 +15,8 @@ from app.schemas import (
     GuardianBatchAccessRequest,
     GuardianFaceVerifyRequest,
     GuardianRequestCreate,
+    AdminGuardianCreate,
+    AdminStudentCreate,
     KioskScanRequest,
     LoginRequest,
     RelationshipReview,
@@ -29,6 +31,7 @@ from app.security import (
     require_student,
     require_supervisor,
     verify_password,
+    hash_password,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -39,6 +42,10 @@ with engine.begin() as connection:
     guardian_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(guardians)"))}
     if "face_image" not in guardian_columns:
         connection.execute(text("ALTER TABLE guardians ADD COLUMN face_image TEXT"))
+    if "password_hash" not in guardian_columns:
+        connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
+    if "is_active" not in guardian_columns:
+        connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
 
 app = FastAPI(
     title="Hostel Access Management API",
@@ -242,6 +249,87 @@ def me(supervisor: models.Supervisor = Depends(require_supervisor)):
         "full_name": supervisor.full_name,
         "email": supervisor.email,
         "role": supervisor.role,
+    }
+
+
+@app.post("/admin/students", status_code=201)
+def create_admin_student(
+    payload: AdminStudentCreate,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    """Create a student account from the protected administration portal."""
+    building_or_404(database, payload.building_id)
+    assert_assignment(database, supervisor, payload.building_id)
+    if database.query(models.Student).filter(
+        or_(
+            func.lower(models.Student.email) == payload.email.lower(),
+            func.lower(models.Student.university_id) == payload.university_id.lower(),
+        )
+    ).first():
+        raise HTTPException(status_code=409, detail="Student email or university ID already exists")
+    student = models.Student(
+        university_id=payload.university_id.strip(),
+        full_name=payload.full_name.strip(),
+        email=payload.email.strip().lower(),
+        phone="",
+        city="",
+        building_id=payload.building_id,
+        room_number=payload.room_number.strip(),
+        current_status="inside",
+        is_active=payload.is_active,
+    )
+    database.add(student)
+    database.flush()
+    database.add(models.StudentCredential(
+        student_id=student.id,
+        password_hash=hash_password(payload.password),
+    ))
+    database.commit()
+    database.refresh(student)
+    return {"student": {**student_dict(student), "is_active": student.is_active}}
+
+
+@app.post("/admin/guardians", status_code=201)
+def create_admin_guardian(
+    payload: AdminGuardianCreate,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    """Create a guardian account; relationship approval is a separate step."""
+    del supervisor
+    if database.query(models.Guardian).filter(
+        or_(
+            func.lower(models.Guardian.email) == payload.email.lower(),
+            models.Guardian.emirates_id == payload.emirates_id.strip(),
+        )
+    ).first():
+        raise HTTPException(status_code=409, detail="Guardian email or Emirates ID already exists")
+    guardian = models.Guardian(
+        guardian_code=f"PENDING-{secrets.token_hex(5).upper()}",
+        full_name=payload.full_name.strip(),
+        emirates_id=payload.emirates_id.strip(),
+        email=payload.email.strip().lower(),
+        phone=payload.phone.strip(),
+        city="",
+        password_hash=hash_password(payload.password),
+        is_active=payload.is_active,
+        face_status="not_enrolled",
+        identity_match=0,
+    )
+    database.add(guardian)
+    database.commit()
+    database.refresh(guardian)
+    return {
+        "guardian": {
+            "id": guardian.id,
+            "full_name": guardian.full_name,
+            "emirates_id": guardian.emirates_id,
+            "email": guardian.email,
+            "phone": guardian.phone,
+            "is_active": guardian.is_active,
+            "face_status": guardian.face_status,
+        }
     }
 
 

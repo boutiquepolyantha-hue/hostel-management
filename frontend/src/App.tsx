@@ -15,6 +15,7 @@ import {
   Search,
   ShieldCheck,
   UserCheck,
+  UserPlus,
   Users,
   X,
 } from "lucide-react";
@@ -365,6 +366,7 @@ const NAVIGATION = [
   { key: "tamam", label: "Daily Tamam", icon: <ClipboardCheck /> },
   { key: "buses", label: "Bus Trips", icon: <Bus /> },
   { key: "guardians", label: "Guardian Approvals", icon: <ShieldCheck /> },
+  { key: "users", label: "Add Users", icon: <UserPlus /> },
 ];
 
 
@@ -427,8 +429,122 @@ function AdminLayout({
         {section === "tamam" && <Tamam buildingId={id} />}
         {section === "buses" && <Buses buildingId={id} />}
         {section === "guardians" && <GuardianApprovals buildingId={id} />}
+        {section === "users" && <UserManagement buildingId={id} />}
       </main>
     </div>
+  );
+}
+
+
+function UserManagement({ buildingId }: { buildingId: number }) {
+  const [tab, setTab] = useState<"student" | "guardian">("student");
+  const [buildings, setBuildings] = useState<Building[]>([]);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [student, setStudent] = useState({
+    full_name: "",
+    university_id: "",
+    email: "",
+    password: "",
+    building_id: String(buildingId),
+    room_number: "",
+    is_active: true,
+  });
+  const [guardian, setGuardian] = useState({
+    full_name: "",
+    emirates_id: "",
+    email: "",
+    password: "",
+    phone: "",
+    is_active: true,
+  });
+
+  useEffect(() => {
+    api<Building[]>("/buildings").then((items) => {
+      setBuildings(items);
+      if (!student.building_id && items[0]) {
+        setStudent((current) => ({ ...current, building_id: String(items[0].id) }));
+      }
+    }).catch((reason) => setError(reason.message));
+  }, [student.building_id]);
+
+  function resetMessages() {
+    setError("");
+    setMessage("");
+  }
+
+  async function submitStudent(event: FormEvent) {
+    event.preventDefault();
+    resetMessages();
+    setSaving(true);
+    try {
+      await api("/admin/students", {
+        method: "POST",
+        body: JSON.stringify({ ...student, building_id: Number(student.building_id) }),
+      });
+      setMessage("Student account created. Face enrollment can be completed next.");
+      setStudent((current) => ({ ...current, full_name: "", university_id: "", email: "", password: "", room_number: "" }));
+    } catch (reason: any) {
+      setError(reason.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitGuardian(event: FormEvent) {
+    event.preventDefault();
+    resetMessages();
+    setSaving(true);
+    try {
+      await api("/admin/guardians", { method: "POST", body: JSON.stringify(guardian) });
+      setMessage("Guardian account created. Relationship approval and face enrollment are separate steps.");
+      setGuardian((current) => ({ ...current, full_name: "", emirates_id: "", email: "", password: "", phone: "" }));
+    } catch (reason: any) {
+      setError(reason.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="user-management-page">
+      <PageTitle title="Add users" subtitle="Create student and guardian accounts for the selected building." />
+      <div className="user-tabs">
+        <button className={tab === "student" ? "active" : ""} onClick={() => { setTab("student"); resetMessages(); }}><UserCheck size={18} /> Student</button>
+        <button className={tab === "guardian" ? "active" : ""} onClick={() => { setTab("guardian"); resetMessages(); }}><ShieldCheck size={18} /> Guardian</button>
+      </div>
+      {message && <div className="success-message">{message}</div>}
+      {error && <div className="error-message">{error}</div>}
+      {tab === "student" ? (
+        <form className="user-form-card" onSubmit={submitStudent}>
+          <div className="form-section-heading"><UserCheck /><div><h2>Student account</h2><p>All fields are required. Password must contain at least 8 characters.</p></div></div>
+          <div className="form-grid">
+            <label>Full name<input required value={student.full_name} onChange={(event) => setStudent({ ...student, full_name: event.target.value })} /></label>
+            <label>University ID<input required value={student.university_id} onChange={(event) => setStudent({ ...student, university_id: event.target.value })} /></label>
+            <label>Email<input required type="email" value={student.email} onChange={(event) => setStudent({ ...student, email: event.target.value })} /></label>
+            <label>Password<input required minLength={8} type="password" value={student.password} onChange={(event) => setStudent({ ...student, password: event.target.value })} /></label>
+            <label>Building<select required value={student.building_id} onChange={(event) => setStudent({ ...student, building_id: event.target.value })}>{buildings.map((building) => <option key={building.id} value={building.id}>{building.name} ({building.code})</option>)}</select></label>
+            <label>Room number<input required value={student.room_number} onChange={(event) => setStudent({ ...student, room_number: event.target.value })} /></label>
+          </div>
+          <label className="checkbox-field"><input type="checkbox" checked={student.is_active} onChange={(event) => setStudent({ ...student, is_active: event.target.checked })} /> Active student account</label>
+          <button className="primary-button" disabled={saving}>{saving ? "Creating…" : "Create student"}</button>
+        </form>
+      ) : (
+        <form className="user-form-card" onSubmit={submitGuardian}>
+          <div className="form-section-heading"><ShieldCheck /><div><h2>Guardian account</h2><p>Face enrollment and student relationship approval happen after account creation.</p></div></div>
+          <div className="form-grid">
+            <label>Full name<input required value={guardian.full_name} onChange={(event) => setGuardian({ ...guardian, full_name: event.target.value })} /></label>
+            <label>Emirates ID<input required value={guardian.emirates_id} onChange={(event) => setGuardian({ ...guardian, emirates_id: event.target.value })} /></label>
+            <label>Email<input required type="email" value={guardian.email} onChange={(event) => setGuardian({ ...guardian, email: event.target.value })} /></label>
+            <label>Password<input required minLength={8} type="password" value={guardian.password} onChange={(event) => setGuardian({ ...guardian, password: event.target.value })} /></label>
+            <label>Phone<input required type="tel" value={guardian.phone} onChange={(event) => setGuardian({ ...guardian, phone: event.target.value })} /></label>
+          </div>
+          <label className="checkbox-field"><input type="checkbox" checked={guardian.is_active} onChange={(event) => setGuardian({ ...guardian, is_active: event.target.checked })} /> Active guardian account</label>
+          <button className="primary-button" disabled={saving}>{saving ? "Creating…" : "Create guardian"}</button>
+        </form>
+      )}
+    </section>
   );
 }
 
