@@ -1,4 +1,5 @@
 import json
+import os
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -101,6 +102,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "https://hostel-management-web.onrender.com",
+        os.getenv("FRONTEND_URL", "").rstrip("/"),
     ],
     allow_credentials=True,
     allow_methods=["*"],
