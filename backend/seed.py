@@ -38,6 +38,10 @@ CREATE TABLE supervisor_buildings (
 CREATE TABLE session_tokens (
  id INTEGER PRIMARY KEY, supervisor_id INTEGER NOT NULL REFERENCES supervisors(id),
  token_hash VARCHAR(64) NOT NULL UNIQUE, expires_at DATETIME NOT NULL);
+CREATE TABLE audit_logs (
+ id INTEGER PRIMARY KEY, event_type VARCHAR(80) NOT NULL,
+ entity_type VARCHAR(80) NOT NULL, entity_id INTEGER,
+ occurred_at DATETIME NOT NULL, details TEXT NOT NULL);
 CREATE TABLE students (
  id INTEGER PRIMARY KEY, university_id VARCHAR(30) NOT NULL UNIQUE,
  full_name VARCHAR(120) NOT NULL, email VARCHAR(160) NOT NULL UNIQUE,

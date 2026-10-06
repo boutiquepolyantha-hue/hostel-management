@@ -1,3 +1,4 @@
+import json
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -5,7 +6,7 @@ from pathlib import Path
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, text
+from sqlalchemy import event, func, inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -39,18 +40,54 @@ Base.metadata.create_all(bind=engine)
 # Keep existing demonstration databases compatible with the guardian face
 # enrollment field added after the initial schema was created.
 with engine.begin() as connection:
-    guardian_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(guardians)"))}
-    if "face_image" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN face_image TEXT"))
-    if "password_hash" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
-    if "is_active" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
-    if "relationship" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN relationship VARCHAR(40) DEFAULT ''"))
-    student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)"))}
-    if "face_image" not in student_columns:
-        connection.execute(text("ALTER TABLE students ADD COLUMN face_image TEXT"))
+    if connection.dialect.name == "sqlite":
+        guardian_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(guardians)"))}
+        if "face_image" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN face_image TEXT"))
+        if "password_hash" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
+        if "is_active" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+        if "relationship" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN relationship VARCHAR(40) DEFAULT ''"))
+        student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)"))}
+        if "face_image" not in student_columns:
+            connection.execute(text("ALTER TABLE students ADD COLUMN face_image TEXT"))
+
+
+@event.listens_for(Session, "after_flush")
+def write_audit_logs(database: Session, _flush_context) -> None:
+    """Record inserts, updates, and deletes without storing secrets or images."""
+    if database.info.get("writing_audit_logs"):
+        return
+    changes = []
+    for operation, objects in (("created", database.new), ("updated", database.dirty), ("deleted", database.deleted)):
+        for obj in objects:
+            if isinstance(obj, models.AuditLog) or not hasattr(obj, "__tablename__"):
+                continue
+            if operation == "updated" and not database.is_modified(obj, include_collections=False):
+                continue
+            identity = inspect(obj).identity
+            details = {}
+            for column in inspect(obj).mapper.column_attrs:
+                key = column.key
+                if key in {"password_hash", "face_image", "qr_token_hash", "token_hash"}:
+                    continue
+                value = getattr(obj, key, None)
+                if isinstance(value, datetime):
+                    value = value.isoformat()
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    details[key] = value
+            changes.append(models.AuditLog(
+                event_type=f"{operation}:{obj.__tablename__}",
+                entity_type=obj.__class__.__name__,
+                entity_id=identity[0] if identity else getattr(obj, "id", None),
+                details=json.dumps(details, default=str),
+            ))
+    if changes:
+        database.info["writing_audit_logs"] = True
+        database.add_all(changes)
+        database.info["writing_audit_logs"] = False
 
 app = FastAPI(
     title="Hostel Access Management API",
@@ -255,6 +292,25 @@ def me(supervisor: models.Supervisor = Depends(require_supervisor)):
         "email": supervisor.email,
         "role": supervisor.role,
     }
+
+
+@app.get("/admin/audit-logs")
+def audit_logs(
+    limit: int = Query(default=200, ge=1, le=1000),
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    """Return the latest append-only activity records for administration."""
+    del supervisor
+    rows = database.query(models.AuditLog).order_by(models.AuditLog.occurred_at.desc()).limit(limit).all()
+    return [{
+        "id": row.id,
+        "event_type": row.event_type,
+        "entity_type": row.entity_type,
+        "entity_id": row.entity_id,
+        "occurred_at": row.occurred_at.isoformat(),
+        "details": json.loads(row.details or "{}"),
+    } for row in rows]
 
 
 @app.post("/admin/students", status_code=201)
