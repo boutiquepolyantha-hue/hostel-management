@@ -11,7 +11,7 @@ from sqlalchemy import event, func, inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app import models
-from app.database import Base, engine, get_database
+from app.database import Base, engine, get_database, SessionLocal
 from app.schemas import (
     AccessRequestCreate,
     GuardianBatchAccessRequest,
@@ -89,6 +89,49 @@ def write_audit_logs(database: Session, _flush_context) -> None:
         database.info["writing_audit_logs"] = True
         database.add_all(changes)
         database.info["writing_audit_logs"] = False
+
+
+def bootstrap_supervisor_from_environment() -> None:
+    """Create the first supervisor when a new hosted database is empty."""
+    email = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
+    password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    database = SessionLocal()
+    try:
+        for code, name in (("B1", "Building 1"), ("B2", "Building 2")):
+            if database.query(models.Building).filter(models.Building.code == code).first() is None:
+                database.add(models.Building(code=code, name=name, is_active=True))
+        database.flush()
+        supervisor = database.query(models.Supervisor).filter(
+            func.lower(models.Supervisor.email) == email
+        ).first()
+        if supervisor is None:
+            supervisor = models.Supervisor(
+                full_name=os.getenv("BOOTSTRAP_ADMIN_NAME", "Dorm Supervisor"),
+                email=email,
+                password_hash=hash_password(password),
+                role="Dorm Supervisor",
+                is_active=True,
+            )
+            database.add(supervisor)
+            database.flush()
+        else:
+            supervisor.password_hash = hash_password(password)
+            supervisor.is_active = True
+        for building in database.query(models.Building).filter(models.Building.code.in_(["B1", "B2"])).all():
+            assigned = database.query(models.SupervisorBuilding).filter(
+                models.SupervisorBuilding.supervisor_id == supervisor.id,
+                models.SupervisorBuilding.building_id == building.id,
+            ).first()
+            if assigned is None:
+                database.add(models.SupervisorBuilding(supervisor_id=supervisor.id, building_id=building.id))
+        database.commit()
+    finally:
+        database.close()
+
+
+bootstrap_supervisor_from_environment()
 
 app = FastAPI(
     title="Hostel Access Management API",
