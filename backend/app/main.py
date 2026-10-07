@@ -723,8 +723,16 @@ def verify_guardian_face(
     payload: GuardianFaceVerifyRequest,
     database: Session = Depends(get_database),
 ):
-    """Verify a guardian through the configured Raspberry Pi face engine."""
-    engine_url = os.getenv("PI_FACE_ENGINE_URL", "").strip()
+    """Verify a guardian through either the website or Raspberry Pi face engine."""
+    if payload.source == "website" and not payload.face_image:
+        raise HTTPException(status_code=422, detail="A website camera image is required")
+    engine_url = os.getenv(
+        "PI_FACE_ENGINE_URL" if payload.source == "raspberry_pi" else "WEBSITE_FACE_ENGINE_URL",
+        "",
+    ).strip()
+    if payload.source == "website" and not engine_url:
+        # A single service may support both capture sources.
+        engine_url = os.getenv("PI_FACE_ENGINE_URL", "").strip()
     if not engine_url:
         raise HTTPException(
             status_code=503,
@@ -736,7 +744,10 @@ def verify_guardian_face(
         headers["X-Face-Engine-Token"] = engine_token
     request = urllib.request.Request(
         engine_url,
-        data=json.dumps({"face_image": payload.face_image}).encode("utf-8"),
+        data=json.dumps({
+            "source": payload.source,
+            **({"face_image": payload.face_image} if payload.face_image else {}),
+        }).encode("utf-8"),
         headers=headers,
         method="POST",
     )

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -61,8 +63,9 @@ class KioskScanRequest(BaseModel):
 
 
 class GuardianFaceVerifyRequest(BaseModel):
-    # The browser/Pi sends a live capture to the configured face engine.
-    face_image: str = Field(min_length=100, max_length=4_000_000)
+    source: Literal["website", "raspberry_pi"] = "website"
+    # Website mode sends an image; Raspberry Pi mode captures directly on the Pi.
+    face_image: str | None = Field(default=None, min_length=100, max_length=4_000_000)
 
 
 class GuardianBatchAccessRequest(BaseModel):

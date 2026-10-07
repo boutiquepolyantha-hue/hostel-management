@@ -63,18 +63,25 @@ export function GuardianKiosk() {
   }
 
   async function verifyFace() {
+    await verifyWithSource("website");
+  }
+
+  async function verifyWithSource(source: "website" | "raspberry_pi") {
     setError("");
     setLoading(true);
     try {
-      const video = videoRef.current;
-      if (!video) throw new Error("Camera capture is not ready");
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const face_image = canvas.toDataURL("image/jpeg", .82);
+      let face_image: string | undefined;
+      if (source === "website") {
+        const video = videoRef.current;
+        if (!video) throw new Error("Camera capture is not ready");
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+        face_image = canvas.toDataURL("image/jpeg", .82);
+      }
       const response = await api<{ verified: boolean; guardian: Guardian }>("/kiosk/guardian/verify-face", {
-        method: "POST", body: JSON.stringify({ face_image }),
+        method: "POST", body: JSON.stringify({ source, ...(face_image ? { face_image } : {}) }),
       });
       streamRef.current?.getTracks().forEach(t => t.stop());
       setGuardian(response.guardian);
@@ -132,7 +139,7 @@ export function GuardianKiosk() {
           <p>Remove sunglasses and look directly at the camera</p>
           <span className="machine-ok"><Camera /> Verification machine connected <CheckCircle2 /></span>
           {!camera
-            ? <button className="gk-primary" onClick={startCamera}><Camera /> Start Face Verification</button>
+            ? <div className="gk-verification-options"><button className="gk-primary" onClick={startCamera}><Camera /> Use this device camera</button><button className="gk-secondary" disabled={loading} onClick={() => verifyWithSource("raspberry_pi")}><ShieldCheck /> {loading ? "Identifying profile…" : "Use Raspberry Pi camera"}</button></div>
             : <button className="gk-primary" disabled={loading} onClick={verifyFace}><Camera /> {loading ? "Identifying profile…" : "Capture and identify me"}</button>}
           {error && <div className="gk-error">{error}</div>}
           <small><ShieldCheck /> Guardian login uses face verification only. The Raspberry Pi face engine must be connected and the guardian relationship must be approved.</small>
