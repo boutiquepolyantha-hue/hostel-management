@@ -1523,6 +1523,13 @@ def review_guardian_link(
             guardian.guardian_code = f"G-{guardian.id:05d}"
         enroll_guardian_with_face_engine(guardian)
         guardian.face_status = "verified"
+        # Approval grants the two residence actions; current inside/outside
+        # status still determines which action is available in the kiosk.
+        link.can_check_in = True
+        link.can_check_out = True
+    elif payload.decision == "rejected":
+        link.can_check_in = False
+        link.can_check_out = False
     database.commit()
     return {"id": link.id, "status": link.status}
 
