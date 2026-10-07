@@ -1616,8 +1616,15 @@ def review_guardian_link(
             raise HTTPException(status_code=422, detail="A guardian face enrollment photo is required before approval")
         if guardian.guardian_code.startswith("PENDING-"):
             guardian.guardian_code = f"G-{guardian.id:05d}"
-        enroll_guardian_with_face_engine(guardian)
-        guardian.face_status = "verified"
+        try:
+            enroll_guardian_with_face_engine(guardian)
+            guardian.face_status = "verified"
+        except HTTPException:
+            # Do not block the relationship approval when the external face
+            # service is temporarily offline. The relationship is approved,
+            # while face login remains pending until enrollment succeeds.
+            guardian.face_status = "enrollment_pending"
+            link.supervisor_note = ((link.supervisor_note or "") + " Face enrollment pending; retry after face service recovery.").strip()
         # Approval grants the two residence actions; current inside/outside
         # status still determines which action is available in the kiosk.
         link.can_check_in = True
