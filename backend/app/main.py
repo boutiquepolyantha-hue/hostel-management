@@ -406,6 +406,12 @@ def create_admin_guardian(
 ):
     """Create a guardian account; relationship approval is a separate step."""
     del supervisor
+    student = database.query(models.Student).filter(
+        func.lower(models.Student.university_id) == payload.student_university_id.strip().lower(),
+        models.Student.is_active.is_(True),
+    ).first()
+    if student is None:
+        raise HTTPException(status_code=404, detail="Active student with this university ID was not found")
     if database.query(models.Guardian).filter(
         or_(
             func.lower(models.Guardian.email) == payload.email.lower(),
@@ -428,6 +434,16 @@ def create_admin_guardian(
         identity_match=0,
     )
     database.add(guardian)
+    database.flush()
+    database.add(models.GuardianStudentLink(
+        guardian_id=guardian.id,
+        student_id=student.id,
+        relationship=payload.relationship.strip(),
+        status="pending",
+        can_check_in=False,
+        can_check_out=False,
+        requested_at=datetime.utcnow(),
+    ))
     database.commit()
     database.refresh(guardian)
     return {
@@ -441,6 +457,8 @@ def create_admin_guardian(
             "relationship": guardian.relationship,
             "is_active": guardian.is_active,
             "face_status": guardian.face_status,
+            "student_university_id": student.university_id,
+            "relationship_status": "pending",
         }
     }
 
@@ -542,6 +560,7 @@ def student_guardian_links(database: Session, student_id: int) -> list[dict]:
     )
     return [{
         "id": link.id,
+        "guardian_code": guardian.guardian_code,
         "full_name": guardian.full_name,
         "email": guardian.email,
         "phone": guardian.phone,

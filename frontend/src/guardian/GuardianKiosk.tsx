@@ -32,6 +32,7 @@ const steps = ["Verify Identity", "Select Students", "Choose Action", "Request S
 export function GuardianKiosk() {
   const [step, setStep] = useState(1);
   const [guardian, setGuardian] = useState<Guardian | null>(null);
+  const [guardianCode, setGuardianCode] = useState("G-20001");
   const [selected, setSelected] = useState<number[]>([]);
   const [action, setAction] = useState<Action | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -67,7 +68,7 @@ export function GuardianKiosk() {
     setLoading(true);
     try {
       const response = await api<{ verified: boolean; guardian: Guardian }>("/kiosk/guardian/verify-face", {
-        method: "POST", body: JSON.stringify({ guardian_code: "G-20001" }),
+        method: "POST", body: JSON.stringify({ guardian_code: guardianCode.trim() }),
       });
       streamRef.current?.getTracks().forEach(t => t.stop());
       setGuardian(response.guardian);
@@ -128,7 +129,8 @@ export function GuardianKiosk() {
             ? <button className="gk-primary" onClick={startCamera}><Camera /> Start Face Verification</button>
             : <button className="gk-primary" disabled={loading} onClick={verifyFace}><Camera /> {loading ? "Identifying profile…" : "Capture and identify me"}</button>}
           {error && <div className="gk-error">{error}</div>}
-          <small><ShieldCheck /> Demo mode identifies guardian G-20001. Connect the Raspberry Pi face adapter before production.</small>
+          <label className="gk-code-input">Approved guardian code<input value={guardianCode} onChange={e => setGuardianCode(e.target.value)} placeholder="Example: G-00001" /></label>
+          <small><ShieldCheck /> Use the code shown in the student portal after supervisor approval. The browser camera is only a preview; connect the Raspberry Pi face adapter for real face matching.</small>
         </article>
       </section>}
 
