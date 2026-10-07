@@ -644,8 +644,6 @@ function Overview({ buildingId }: { buildingId: number }) {
   const [recordDate, setRecordDate] = useState("");
   const [city, setCity] = useState("");
   const [search, setSearch] = useState("");
-  const [seeding, setSeeding] = useState(false);
-  const [seedMessage, setSeedMessage] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -695,10 +693,6 @@ function Overview({ buildingId }: { buildingId: number }) {
           <div className="alert danger"><ShieldCheck /> {data.pending_guardian_approvals} guardian relationships need review</div>
           <div className="alert info"><Bus /> Review scheduled bus departure readiness</div>
         </article>
-      </section>
-      <section className="panel">
-        <div className="panel-heading"><div><h2>Demo data</h2><p>Add 100 sample rows to Entry & Exit, Daily Tamam, Bus Trips, and Guardian Relationship Approvals.</p></div><button className="secondary-button" disabled={seeding} onClick={async () => { setSeeding(true); setSeedMessage(""); try { const result = await api<{ entry_exit_added: number; tamam_added: number; bus_trips_added: number; guardian_approval_requests_added: number }>("/admin/demo-data/seed", { method: "POST" }); setSeedMessage(`Added ${result.entry_exit_added} Entry & Exit, ${result.tamam_added} Tamam, ${result.bus_trips_added} Bus Trip, and ${result.guardian_approval_requests_added} guardian approval rows.`); } catch (reason) { setSeedMessage(reason instanceof Error ? reason.message : "Could not generate demo data"); } finally { setSeeding(false); } }}>{seeding ? "Generating…" : "Generate 100 rows"}</button></div>
-        {seedMessage && <div className="alert info">{seedMessage}</div>}
       </section>
       <section className="panel">
         <div className="panel-heading">
