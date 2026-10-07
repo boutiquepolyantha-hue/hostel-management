@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import secrets
 import urllib.error
 import urllib.request
@@ -18,6 +19,7 @@ from app.schemas import (
     AccessRequestCreate,
     GuardianBatchAccessRequest,
     GuardianFaceVerifyRequest,
+    FaceEnrollmentRequest,
     GuardianRequestCreate,
     AdminGuardianCreate,
     AdminStudentCreate,
@@ -269,7 +271,8 @@ def student_profile(database: Session, student: models.Student) -> dict:
     return {
         **student_dict(student),
         "active": student.is_active,
-        "face_status": "verified",
+        "face_status": "enrolled" if student.face_image else "not_enrolled",
+        "face_enrolled": bool(student.face_image),
         "guardian": guardian,
         "relationship": relationship,
         "last_access": (
@@ -390,6 +393,89 @@ def audit_logs(
         "occurred_at": row.occurred_at.isoformat(),
         "details": json.loads(row.details or "{}"),
     } for row in rows]
+
+
+@app.post("/admin/demo-data/seed")
+def seed_hosted_demo_data(
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    """Add 100 demo rows to the hosted database for each admin report."""
+    randomizer = random.Random()
+    students = database.query(models.Student).filter(models.Student.is_active.is_(True)).all()
+    guardians = database.query(models.Guardian).filter(models.Guardian.is_active.is_(True)).all()
+    buildings = database.query(models.Building).filter(models.Building.is_active.is_(True)).all()
+    if not students or not guardians or not buildings:
+        raise HTTPException(status_code=409, detail="Create students, guardians, and buildings before generating demo data")
+
+    now = datetime.utcnow()
+    relationships = ["Father", "Mother", "Brother", "Sister", "Uncle", "Aunt"]
+    destinations = ["Bani Yas", "Khor Fakkan", "Al Shahama", "Dubai Mall", "Al Ain"]
+
+    for _ in range(100):
+        student = randomizer.choice(students)
+        guardian = randomizer.choice(guardians)
+        action = randomizer.choice(["check_in", "check_out"])
+        database.add(models.EntryExitRecord(
+            student_id=student.id,
+            guardian_id=guardian.id,
+            action=action,
+            qr_status=randomizer.choice(["used", "expired", "used"]),
+            face_status=randomizer.choice(["verified", "verified", "failed"]),
+            occurred_at=now - timedelta(days=randomizer.randrange(0, 31), minutes=randomizer.randrange(0, 1440)),
+        ))
+
+        tamam_date = (now - timedelta(days=randomizer.randrange(0, 31))).date().isoformat()
+        completed = randomizer.random() < 0.78
+        database.add(models.TamamRecord(
+            student_id=student.id,
+            record_date=tamam_date,
+            status="completed" if completed else "not_completed",
+            verification_method=randomizer.choice(["face", "card", "fingerprint"]) if completed else None,
+            completed_at=now - timedelta(days=randomizer.randrange(0, 31)) if completed else None,
+        ))
+
+        building = randomizer.choice(buildings)
+        database.add(models.BusTrip(
+            building_id=building.id,
+            bus_number=f"Bus {randomizer.randrange(1, 40):02d}",
+            destination=randomizer.choice(destinations),
+            departure_at=now - timedelta(days=randomizer.randrange(0, 31), hours=randomizer.randrange(0, 12)),
+            capacity=randomizer.choice([20, 30, 40, 50]),
+            status=randomizer.choice(["scheduled", "boarding", "departed", "completed"]),
+        ))
+
+        for _link_try in range(20):
+            link_student = randomizer.choice(students)
+            link_guardian = randomizer.choice(guardians)
+            exists = database.query(models.GuardianStudentLink).filter(
+                models.GuardianStudentLink.student_id == link_student.id,
+                models.GuardianStudentLink.guardian_id == link_guardian.id,
+            ).first()
+            if exists is None:
+                approved = randomizer.random() < 0.72
+                database.add(models.GuardianStudentLink(
+                    guardian_id=link_guardian.id,
+                    student_id=link_student.id,
+                    relationship=randomizer.choice(relationships),
+                    status="approved" if approved else randomizer.choice(["pending", "rejected"]),
+                    can_check_in=approved,
+                    can_check_out=approved,
+                    requested_at=now - timedelta(days=randomizer.randrange(0, 31)),
+                    reviewed_at=now - timedelta(days=randomizer.randrange(0, 20)) if approved else None,
+                    supervisor_note="Generated demonstration record",
+                ))
+                break
+    database.commit()
+    return {
+        "message": "Generated demonstration data",
+        "entry_exit_added": 100,
+        "tamam_added": 100,
+        "bus_trips_added": 100,
+        "guardian_approval_requests_added": database.query(models.GuardianStudentLink).filter(
+            models.GuardianStudentLink.supervisor_note == "Generated demonstration record"
+        ).count(),
+    }
 
 
 @app.post("/admin/students", status_code=201)
@@ -561,6 +647,17 @@ def student_me(
     database: Session = Depends(get_database),
 ):
     return {"authenticated": True, "student": student_profile(database, student)}
+
+
+@app.patch("/student/profile/face")
+def enroll_student_face(
+    payload: FaceEnrollmentRequest,
+    student: models.Student = Depends(require_student),
+    database: Session = Depends(get_database),
+):
+    student.face_image = payload.face_image
+    database.commit()
+    return {"face_enrolled": True, "face_status": "enrolled"}
 
 
 @app.post("/student/auth/logout")

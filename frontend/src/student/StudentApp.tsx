@@ -74,6 +74,7 @@ interface StudentProfileData {
   current_status: string;
   active: boolean;
   face_status: string;
+  face_enrolled: boolean;
   guardian: GuardianSummary | null;
   relationship: string | null;
   last_access: {
@@ -577,6 +578,53 @@ function StudentProfilePage({
   onLogout: () => void;
 }) {
   const navigate = useNavigate();
+  const [facePhoto, setFacePhoto] = useState("");
+  const [cameraActive, setCameraActive] = useState(false);
+  const [faceEnrolled, setFaceEnrolled] = useState(student.face_enrolled);
+  const [faceSaving, setFaceSaving] = useState(false);
+  const [faceMessage, setFaceMessage] = useState("");
+  const [faceError, setFaceError] = useState("");
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => () => streamRef.current?.getTracks().forEach(track => track.stop()), []);
+
+  async function startFaceCamera() {
+    setFaceError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setFaceError("Camera access requires HTTPS or localhost.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      streamRef.current = stream;
+      setCameraActive(true);
+      requestAnimationFrame(async () => { if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => null); } });
+    } catch { setFaceError("Camera permission was blocked or no camera was found."); }
+  }
+
+  function captureStudentFace() {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+    setFacePhoto(canvas.toDataURL("image/jpeg", .82));
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    setCameraActive(false);
+  }
+
+  async function saveStudentFace() {
+    if (!facePhoto) return;
+    setFaceSaving(true); setFaceError(""); setFaceMessage("");
+    try {
+      await api("/student/profile/face", { method: "PATCH", body: JSON.stringify({ face_image: facePhoto }) });
+      setFaceEnrolled(true); setFaceMessage("Your face verification photo was saved.");
+    } catch (reason) { setFaceError(reason instanceof Error ? reason.message : "Could not save face verification"); }
+    finally { setFaceSaving(false); }
+  }
+
   return (
     <StudentPage student={student} active="profile">
       <div className="student-screen-content">
@@ -607,7 +655,16 @@ function StudentProfilePage({
         </section>
         <section className="student-white-card">
           <h2>Security & Verification</h2>
-          <div className="profile-row"><Camera /> Face verification <StatusPill text="Verified" /></div>
+          <div className="profile-row"><Camera /> Face verification <StatusPill text={faceEnrolled ? "Enrolled" : "Not enrolled"} /></div>
+          <div className="guardian-photo-capture">
+            {facePhoto ? <img src={facePhoto} alt="Student face enrollment" /> : cameraActive ? <video ref={videoRef} autoPlay playsInline muted /> : <UserRound />}
+            <div><strong>Student face enrollment</strong><p>Save your face once so it can be verified when a guardian requests check-in or check-out.</p>
+              {!cameraActive && !facePhoto && <button type="button" className="student-secondary" onClick={startFaceCamera}><Camera /> Open camera</button>}
+              {cameraActive && <button type="button" className="student-primary" onClick={captureStudentFace}>Capture face</button>}
+              {facePhoto && <><button type="button" className="student-secondary" onClick={() => setFacePhoto("")}>Retake</button><button type="button" className="student-primary" disabled={faceSaving} onClick={saveStudentFace}>{faceSaving ? "Saving…" : "Save face verification"}</button></>}
+              {faceError && <div className="student-error">{faceError}</div>}{faceMessage && <div className="student-success">{faceMessage}</div>}
+            </div>
+          </div>
         </section>
         <button className="student-signout" onClick={onLogout}><LogOut /> Sign out</button>
       </div>
