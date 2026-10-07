@@ -300,9 +300,9 @@ def guardian_kiosk_profile(database: Session, guardian: models.Guardian) -> dict
     students = []
     for link, student, building in rows:
         allowed_actions = []
-        if link.can_check_in and student.current_status == "outside":
+        if student.current_status == "outside":
             allowed_actions.append("check_in")
-        if link.can_check_out and student.current_status == "inside":
+        if student.current_status == "inside":
             allowed_actions.append("check_out")
         students.append({
             **student_dict(student),
@@ -691,10 +691,8 @@ def create_student_access_request(
             detail="An approved guardian relationship is required",
         )
     link, guardian = guardian_row
-    if payload.action == "check_in" and not link.can_check_in:
-        raise HTTPException(status_code=403, detail="Guardian cannot request entry")
-    if payload.action == "check_out" and not link.can_check_out:
-        raise HTTPException(status_code=403, detail="Guardian cannot request exit")
+    # An approved relationship grants both directions; residence status below
+    # determines whether this request is entry or exit.
 
     database.query(models.DormAccessRequest).filter(
         models.DormAccessRequest.student_id == student.id,
@@ -823,11 +821,11 @@ def create_guardian_access_requests(
     for link, student in rows:
         allowed = (
             payload.action == "check_in"
-            and link.can_check_in
+            and link.status == "approved"
             and student.current_status == "outside"
         ) or (
             payload.action == "check_out"
-            and link.can_check_out
+            and link.status == "approved"
             and student.current_status == "inside"
         )
         if not allowed:
