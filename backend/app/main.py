@@ -726,19 +726,15 @@ def verify_guardian_face(
     """Verify a guardian through either the website or Raspberry Pi face engine."""
     if payload.source == "website" and not payload.face_image:
         raise HTTPException(status_code=422, detail="A website camera image is required")
-    engine_url = os.getenv(
-        "PI_FACE_ENGINE_URL" if payload.source == "raspberry_pi" else "WEBSITE_FACE_ENGINE_URL",
-        "",
-    ).strip()
-    if payload.source == "website" and not engine_url:
-        # A single service may support both capture sources.
-        engine_url = os.getenv("PI_FACE_ENGINE_URL", "").strip()
+    # Both laptop/phone cameras and Raspberry Pi cameras use the same generic
+    # face service. The Pi is only a camera device, not a required dependency.
+    engine_url = os.getenv("FACE_ENGINE_URL", "").strip()
     if not engine_url:
         raise HTTPException(
             status_code=503,
-            detail="Face-only login is enabled, but the Raspberry Pi face engine is not connected",
+            detail="Face-only login is enabled, but FACE_ENGINE_URL is not configured",
         )
-    engine_token = os.getenv("PI_FACE_ENGINE_TOKEN", "").strip()
+    engine_token = os.getenv("FACE_ENGINE_TOKEN", "").strip()
     headers = {"Content-Type": "application/json"}
     if engine_token:
         headers["X-Face-Engine-Token"] = engine_token
@@ -755,7 +751,7 @@ def verify_guardian_face(
         with urllib.request.urlopen(request, timeout=8) as response:
             match = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, ValueError) as reason:
-        raise HTTPException(status_code=503, detail="The Raspberry Pi face engine is unavailable") from reason
+        raise HTTPException(status_code=503, detail="The configured face-verification service is unavailable") from reason
     guardian_code = str(match.get("guardian_code", "")).strip()
     if match.get("verified") is not True or not guardian_code:
         raise HTTPException(status_code=403, detail="Guardian face could not be verified")

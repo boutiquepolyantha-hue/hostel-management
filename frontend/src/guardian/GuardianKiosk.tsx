@@ -37,6 +37,8 @@ export function GuardianKiosk() {
   const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [camera, setCamera] = useState(false);
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -45,16 +47,21 @@ export function GuardianKiosk() {
 
   useEffect(() => () => streamRef.current?.getTracks().forEach(t => t.stop()), []);
 
-  async function startCamera() {
+  async function startCamera(deviceId = selectedCameraId) {
     setError("");
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("Camera is unavailable here. Open the app on localhost or HTTPS, then allow camera access.");
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      const video = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" };
+      const stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
       streamRef.current = stream;
       setCamera(true);
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter(device => device.kind === "videoinput");
+      setCameraDevices(cameras);
+      if (!selectedCameraId && cameras[0]) setSelectedCameraId(cameras[0].deviceId);
       requestAnimationFrame(async () => { if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => null); } });
     } catch (reason) {
       const name = reason instanceof DOMException ? reason.name : "";
@@ -139,10 +146,11 @@ export function GuardianKiosk() {
           <p>Remove sunglasses and look directly at the camera</p>
           <span className="machine-ok"><Camera /> Verification machine connected <CheckCircle2 /></span>
           {!camera
-            ? <div className="gk-verification-options"><button className="gk-primary" onClick={startCamera}><Camera /> Use this device camera</button><button className="gk-secondary" disabled={loading} onClick={() => verifyWithSource("raspberry_pi")}><ShieldCheck /> {loading ? "Identifying profile…" : "Use Raspberry Pi camera"}</button></div>
+            ? <button className="gk-primary" onClick={() => startCamera()}><Camera /> Start camera verification</button>
             : <button className="gk-primary" disabled={loading} onClick={verifyFace}><Camera /> {loading ? "Identifying profile…" : "Capture and identify me"}</button>}
+          {cameraDevices.length > 1 && <label className="gk-camera-select">Camera<select value={selectedCameraId} onChange={event => { streamRef.current?.getTracks().forEach(track => track.stop()); setCamera(false); setSelectedCameraId(event.target.value); startCamera(event.target.value); }}>{cameraDevices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>)}</select></label>}
           {error && <div className="gk-error">{error}</div>}
-          <small><ShieldCheck /> Guardian login uses face verification only. The Raspberry Pi face engine must be connected and the guardian relationship must be approved.</small>
+          <small><ShieldCheck /> Guardian login uses face verification only. Select any camera connected to this device, including a Raspberry Pi camera. The guardian relationship must be approved.</small>
         </article>
       </section>}
 
