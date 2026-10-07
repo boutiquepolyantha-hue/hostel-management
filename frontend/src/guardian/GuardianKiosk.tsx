@@ -99,7 +99,21 @@ export function GuardianKiosk() {
   }
 
   function toggle(id: number) {
-    setSelected(ids => ids.includes(id) ? ids.filter(item => item !== id) : [...ids, id]);
+    setError("");
+    if (selected.includes(id)) {
+      setSelected(ids => ids.filter(item => item !== id));
+      return;
+    }
+    const candidateIds = [...selected, id];
+    const candidateStudents = guardian?.students.filter(student => candidateIds.includes(student.id)) ?? [];
+    const hasSharedAction = (["check_in", "check_out"] as Action[]).some(candidate =>
+      candidateStudents.every(student => student.allowed_actions.includes(candidate))
+    );
+    if (!hasSharedAction) {
+      setError("Select students who share the same available action, or send separate requests.");
+      return;
+    }
+    setSelected(candidateIds);
   }
 
   const chosen = guardian?.students.filter(student => selected.includes(student.id)) ?? [];
@@ -159,9 +173,9 @@ export function GuardianKiosk() {
         <article className="guardian-profile"><div className="gk-avatar">{guardian.full_name.split(" ").map(x => x[0]).join("")}</div><div><h2>{guardian.full_name}</h2><p>Guardian ID: {guardian.guardian_code}</p><p>Mobile: <PhoneLink phone={guardian.phone} /></p></div><span><CheckCircle2 /> Identity Verified · {guardian.identity_match}%</span></article>
         <h1>Select Students</h1><p>Choose one or more linked students for dorm access.</p>
         <div className="gk-info">Only students linked to your approved guardian profile are shown.</div>
-        <div className="student-picker">{guardian.students.map(student => <button className={selected.includes(student.id) ? "selected" : ""} key={student.id} onClick={() => toggle(student.id)}>
+        <div className="student-picker">{guardian.students.map(student => <button disabled={!student.allowed_actions.length} className={selected.includes(student.id) ? "selected" : ""} key={student.id} onClick={() => toggle(student.id)}>
           <i>{selected.includes(student.id) && <Check />}</i><div className="gk-avatar small">{student.full_name.split(" ").map(x => x[0]).join("").slice(0,2)}</div>
-          <div><h2>{student.full_name}</h2><p>{student.university_id}</p><p>{student.building_name} · Room {student.room_number}</p><span className={student.current_status}>{student.current_status === "inside" ? "Inside the Residence" : "Outside the Residence"}</span><small>Relationship: {student.relationship}</small></div>
+          <div><h2>{student.full_name}</h2><p>{student.university_id}</p><p>{student.building_name} · Room {student.room_number}</p><span className={student.current_status}>{student.current_status === "inside" ? "Inside the Residence" : "Outside the Residence"}</span><small>Relationship: {student.relationship}</small><small>Available: {student.allowed_actions.length ? student.allowed_actions.map(item => item === "check_in" ? "Check-in" : "Check-out").join(" / ") : "No action available"}</small></div>
         </button>)}</div>
         <footer className="gk-actions"><strong>{selected.length} student{selected.length === 1 ? "" : "s"} selected</strong><button className="gk-primary" disabled={!selected.length} onClick={() => setStep(3)}>Continue <ArrowRight /></button></footer>
       </section>}
