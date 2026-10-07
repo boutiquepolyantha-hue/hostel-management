@@ -32,7 +32,6 @@ const steps = ["Verify Identity", "Select Students", "Choose Action", "Request S
 export function GuardianKiosk() {
   const [step, setStep] = useState(1);
   const [guardian, setGuardian] = useState<Guardian | null>(null);
-  const [guardianCode, setGuardianCode] = useState("G-20001");
   const [selected, setSelected] = useState<number[]>([]);
   const [action, setAction] = useState<Action | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -67,8 +66,15 @@ export function GuardianKiosk() {
     setError("");
     setLoading(true);
     try {
+      const video = videoRef.current;
+      if (!video) throw new Error("Camera capture is not ready");
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const face_image = canvas.toDataURL("image/jpeg", .82);
       const response = await api<{ verified: boolean; guardian: Guardian }>("/kiosk/guardian/verify-face", {
-        method: "POST", body: JSON.stringify({ guardian_code: guardianCode.trim() }),
+        method: "POST", body: JSON.stringify({ face_image }),
       });
       streamRef.current?.getTracks().forEach(t => t.stop());
       setGuardian(response.guardian);
@@ -129,8 +135,7 @@ export function GuardianKiosk() {
             ? <button className="gk-primary" onClick={startCamera}><Camera /> Start Face Verification</button>
             : <button className="gk-primary" disabled={loading} onClick={verifyFace}><Camera /> {loading ? "Identifying profile…" : "Capture and identify me"}</button>}
           {error && <div className="gk-error">{error}</div>}
-          <label className="gk-code-input">Approved guardian code<input value={guardianCode} onChange={e => setGuardianCode(e.target.value)} placeholder="Example: G-00001" /></label>
-          <small><ShieldCheck /> Use the code shown in the student portal after supervisor approval. The browser camera is only a preview; connect the Raspberry Pi face adapter for real face matching.</small>
+          <small><ShieldCheck /> Guardian login uses face verification only. The Raspberry Pi face engine must be connected and the guardian relationship must be approved.</small>
         </article>
       </section>}
 

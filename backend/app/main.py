@@ -1,6 +1,8 @@
 import json
 import os
 import secrets
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -721,14 +723,39 @@ def verify_guardian_face(
     payload: GuardianFaceVerifyRequest,
     database: Session = Depends(get_database),
 ):
-    """Demo adapter: replace guardian_code with the Pi face-engine match result."""
-    guardian = (
-        database.query(models.Guardian)
-        .filter(models.Guardian.guardian_code == payload.guardian_code.strip())
-        .first()
+    """Verify a guardian through the configured Raspberry Pi face engine."""
+    engine_url = os.getenv("PI_FACE_ENGINE_URL", "").strip()
+    if not engine_url:
+        raise HTTPException(
+            status_code=503,
+            detail="Face-only login is enabled, but the Raspberry Pi face engine is not connected",
+        )
+    engine_token = os.getenv("PI_FACE_ENGINE_TOKEN", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if engine_token:
+        headers["X-Face-Engine-Token"] = engine_token
+    request = urllib.request.Request(
+        engine_url,
+        data=json.dumps({"face_image": payload.face_image}).encode("utf-8"),
+        headers=headers,
+        method="POST",
     )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            match = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as reason:
+        raise HTTPException(status_code=503, detail="The Raspberry Pi face engine is unavailable") from reason
+    guardian_code = str(match.get("guardian_code", "")).strip()
+    if match.get("verified") is not True or not guardian_code:
+        raise HTTPException(status_code=403, detail="Guardian face could not be verified")
+    guardian = database.query(models.Guardian).filter(
+        models.Guardian.guardian_code == guardian_code
+    ).first()
     if guardian is None or guardian.face_status != "verified":
         raise HTTPException(status_code=403, detail="Guardian face could not be verified")
+    if isinstance(match.get("identity_match"), (int, float)):
+        guardian.identity_match = max(0, min(100, int(match["identity_match"])))
+        database.commit()
     return {"verified": True, "guardian": guardian_kiosk_profile(database, guardian)}
 
 

@@ -61,8 +61,8 @@ class KioskScanRequest(BaseModel):
 
 
 class GuardianFaceVerifyRequest(BaseModel):
-    # Demo adapter input. A production Raspberry Pi sends the face-engine match.
-    guardian_code: str = Field(default="G-20001", min_length=3, max_length=30)
+    # The browser/Pi sends a live capture to the configured face engine.
+    face_image: str = Field(min_length=100, max_length=4_000_000)
 
 
 class GuardianBatchAccessRequest(BaseModel):
