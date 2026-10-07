@@ -135,6 +135,37 @@ def bootstrap_supervisor_from_environment() -> None:
 
 bootstrap_supervisor_from_environment()
 
+
+def enroll_guardian_with_face_engine(guardian: models.Guardian) -> None:
+    """Enroll a guardian captured by the website before approving access."""
+    engine_url = os.getenv("FACE_ENGINE_URL", "").strip()
+    if engine_url.endswith("/verify"):
+        engine_url = f"{engine_url[:-len('/verify')]}/enroll"
+    if not engine_url:
+        raise HTTPException(status_code=503, detail="FACE_ENGINE_URL is not configured")
+    if not guardian.face_image:
+        raise HTTPException(status_code=422, detail="A guardian face enrollment photo is required")
+    token = os.getenv("FACE_ENGINE_TOKEN", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Face-Engine-Token"] = token
+    request = urllib.request.Request(
+        engine_url,
+        data=json.dumps({
+            "guardian_code": guardian.guardian_code,
+            "face_images": [guardian.face_image],
+        }).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as reason:
+        raise HTTPException(status_code=503, detail="The face-enrollment service is unavailable") from reason
+    if result.get("enrolled") is not True:
+        raise HTTPException(status_code=502, detail="The face-enrollment service rejected this guardian")
+
 app = FastAPI(
     title="Hostel Access Management API",
     version="1.0.0",
@@ -1490,6 +1521,7 @@ def review_guardian_link(
             raise HTTPException(status_code=422, detail="A guardian face enrollment photo is required before approval")
         if guardian.guardian_code.startswith("PENDING-"):
             guardian.guardian_code = f"G-{guardian.id:05d}"
+        enroll_guardian_with_face_engine(guardian)
         guardian.face_status = "verified"
     database.commit()
     return {"id": link.id, "status": link.status}
