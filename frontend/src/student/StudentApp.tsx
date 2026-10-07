@@ -370,7 +370,8 @@ function DormAccessPage({
                 {pending.action === "check_out" ? <LogOut /> : <ArrowRight />}
                 <div><strong>{pending.action === "check_out" ? "Check-out requested" : "Check-in requested"}</strong><p>Authorized by {pending.guardian_name}</p></div>
               </div>
-              <button className="student-primary" onClick={() => navigate(`/student/verify/${pending.id}`)}><Camera /> Confirm face verification</button>
+              {!student.face_enrolled && <div className="student-error">Enroll your face in your Student Profile before confirming this request. <button className="student-secondary" onClick={() => navigate("/student/profile")}>Open Profile</button></div>}
+              <button className="student-primary" disabled={!student.face_enrolled} onClick={() => navigate(`/student/verify/${pending.id}`)}><Camera /> Confirm face verification</button>
             </>
           ) : (
             <div className="verification-note"><Clock3 /><div><strong>Waiting for your guardian</strong><p>Your approved guardian must verify at the guardian kiosk, select you, and send a check-in or check-out request.</p></div></div>
@@ -455,9 +456,16 @@ function FaceAndQrPage({ student }: { student: StudentProfileData }) {
   async function verify() {
     if (!requestId) return;
     try {
+      const video = videoRef.current;
+      if (!video) throw new Error("Camera capture is not ready");
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const face_image = canvas.toDataURL("image/jpeg", .82);
       const response = await api<VerificationResult>(
         `/student/access/${requestId}/face-verify`,
-        { method: "POST" },
+        { method: "POST", body: JSON.stringify({ face_image }) },
       );
       streamRef.current?.getTracks().forEach((track) => track.stop());
       setCameraActive(false);

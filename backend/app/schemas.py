@@ -58,6 +58,10 @@ class FaceEnrollmentRequest(BaseModel):
     face_image: str = Field(min_length=100, max_length=4_000_000)
 
 
+class StudentFaceVerifyRequest(BaseModel):
+    face_image: str = Field(min_length=100, max_length=4_000_000)
+
+
 class AccessRequestCreate(BaseModel):
     action: str
 
