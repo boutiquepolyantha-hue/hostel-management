@@ -1,15 +1,19 @@
+import json
+import os
 import secrets
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, text
+from sqlalchemy import event, func, inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app import models
-from app.database import Base, engine, get_database
+from app.database import Base, engine, get_database, SessionLocal
 from app.schemas import (
     AccessRequestCreate,
     GuardianBatchAccessRequest,
@@ -39,18 +43,97 @@ Base.metadata.create_all(bind=engine)
 # Keep existing demonstration databases compatible with the guardian face
 # enrollment field added after the initial schema was created.
 with engine.begin() as connection:
-    guardian_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(guardians)"))}
-    if "face_image" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN face_image TEXT"))
-    if "password_hash" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
-    if "is_active" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
-    if "relationship" not in guardian_columns:
-        connection.execute(text("ALTER TABLE guardians ADD COLUMN relationship VARCHAR(40) DEFAULT ''"))
-    student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)"))}
-    if "face_image" not in student_columns:
-        connection.execute(text("ALTER TABLE students ADD COLUMN face_image TEXT"))
+    if connection.dialect.name == "sqlite":
+        guardian_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(guardians)"))}
+        if "face_image" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN face_image TEXT"))
+        if "password_hash" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
+        if "is_active" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+        if "relationship" not in guardian_columns:
+            connection.execute(text("ALTER TABLE guardians ADD COLUMN relationship VARCHAR(40) DEFAULT ''"))
+        student_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(students)"))}
+        if "face_image" not in student_columns:
+            connection.execute(text("ALTER TABLE students ADD COLUMN face_image TEXT"))
+
+
+@event.listens_for(Session, "after_flush")
+def write_audit_logs(database: Session, _flush_context) -> None:
+    """Record inserts, updates, and deletes without storing secrets or images."""
+    if database.info.get("writing_audit_logs"):
+        return
+    changes = []
+    for operation, objects in (("created", database.new), ("updated", database.dirty), ("deleted", database.deleted)):
+        for obj in objects:
+            if isinstance(obj, models.AuditLog) or not hasattr(obj, "__tablename__"):
+                continue
+            if operation == "updated" and not database.is_modified(obj, include_collections=False):
+                continue
+            identity = inspect(obj).identity
+            details = {}
+            for column in inspect(obj).mapper.column_attrs:
+                key = column.key
+                if key in {"password_hash", "face_image", "qr_token_hash", "token_hash"}:
+                    continue
+                value = getattr(obj, key, None)
+                if isinstance(value, datetime):
+                    value = value.isoformat()
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    details[key] = value
+            changes.append(models.AuditLog(
+                event_type=f"{operation}:{obj.__tablename__}",
+                entity_type=obj.__class__.__name__,
+                entity_id=identity[0] if identity else getattr(obj, "id", None),
+                details=json.dumps(details, default=str),
+            ))
+    if changes:
+        database.info["writing_audit_logs"] = True
+        database.add_all(changes)
+        database.info["writing_audit_logs"] = False
+
+
+def bootstrap_supervisor_from_environment() -> None:
+    """Create the first supervisor when a new hosted database is empty."""
+    email = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
+    password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    database = SessionLocal()
+    try:
+        for code, name in (("B1", "Building 1"), ("B2", "Building 2")):
+            if database.query(models.Building).filter(models.Building.code == code).first() is None:
+                database.add(models.Building(code=code, name=name, is_active=True))
+        database.flush()
+        supervisor = database.query(models.Supervisor).filter(
+            func.lower(models.Supervisor.email) == email
+        ).first()
+        if supervisor is None:
+            supervisor = models.Supervisor(
+                full_name=os.getenv("BOOTSTRAP_ADMIN_NAME", "Dorm Supervisor"),
+                email=email,
+                password_hash=hash_password(password),
+                role="Dorm Supervisor",
+                is_active=True,
+            )
+            database.add(supervisor)
+            database.flush()
+        else:
+            supervisor.password_hash = hash_password(password)
+            supervisor.is_active = True
+        for building in database.query(models.Building).filter(models.Building.code.in_(["B1", "B2"])).all():
+            assigned = database.query(models.SupervisorBuilding).filter(
+                models.SupervisorBuilding.supervisor_id == supervisor.id,
+                models.SupervisorBuilding.building_id == building.id,
+            ).first()
+            if assigned is None:
+                database.add(models.SupervisorBuilding(supervisor_id=supervisor.id, building_id=building.id))
+        database.commit()
+    finally:
+        database.close()
+
+
+bootstrap_supervisor_from_environment()
 
 app = FastAPI(
     title="Hostel Access Management API",
@@ -64,6 +147,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "https://hostel-management-web.onrender.com",
+        os.getenv("FRONTEND_URL", "").rstrip("/"),
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -257,6 +342,25 @@ def me(supervisor: models.Supervisor = Depends(require_supervisor)):
     }
 
 
+@app.get("/admin/audit-logs")
+def audit_logs(
+    limit: int = Query(default=200, ge=1, le=1000),
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    """Return the latest append-only activity records for administration."""
+    del supervisor
+    rows = database.query(models.AuditLog).order_by(models.AuditLog.occurred_at.desc()).limit(limit).all()
+    return [{
+        "id": row.id,
+        "event_type": row.event_type,
+        "entity_type": row.entity_type,
+        "entity_id": row.entity_id,
+        "occurred_at": row.occurred_at.isoformat(),
+        "details": json.loads(row.details or "{}"),
+    } for row in rows]
+
+
 @app.post("/admin/students", status_code=201)
 def create_admin_student(
     payload: AdminStudentCreate,
@@ -304,6 +408,12 @@ def create_admin_guardian(
 ):
     """Create a guardian account; relationship approval is a separate step."""
     del supervisor
+    student = database.query(models.Student).filter(
+        func.lower(models.Student.university_id) == payload.student_university_id.strip().lower(),
+        models.Student.is_active.is_(True),
+    ).first()
+    if student is None:
+        raise HTTPException(status_code=404, detail="Active student with this university ID was not found")
     if database.query(models.Guardian).filter(
         or_(
             func.lower(models.Guardian.email) == payload.email.lower(),
@@ -326,6 +436,16 @@ def create_admin_guardian(
         identity_match=0,
     )
     database.add(guardian)
+    database.flush()
+    database.add(models.GuardianStudentLink(
+        guardian_id=guardian.id,
+        student_id=student.id,
+        relationship=payload.relationship.strip(),
+        status="pending",
+        can_check_in=False,
+        can_check_out=False,
+        requested_at=datetime.utcnow(),
+    ))
     database.commit()
     database.refresh(guardian)
     return {
@@ -339,6 +459,8 @@ def create_admin_guardian(
             "relationship": guardian.relationship,
             "is_active": guardian.is_active,
             "face_status": guardian.face_status,
+            "student_university_id": student.university_id,
+            "relationship_status": "pending",
         }
     }
 
@@ -440,6 +562,7 @@ def student_guardian_links(database: Session, student_id: int) -> list[dict]:
     )
     return [{
         "id": link.id,
+        "guardian_code": guardian.guardian_code,
         "full_name": guardian.full_name,
         "email": guardian.email,
         "phone": guardian.phone,
@@ -600,14 +723,46 @@ def verify_guardian_face(
     payload: GuardianFaceVerifyRequest,
     database: Session = Depends(get_database),
 ):
-    """Demo adapter: replace guardian_code with the Pi face-engine match result."""
-    guardian = (
-        database.query(models.Guardian)
-        .filter(models.Guardian.guardian_code == payload.guardian_code.strip())
-        .first()
+    """Verify a guardian through either the website or Raspberry Pi face engine."""
+    if payload.source == "website" and not payload.face_image:
+        raise HTTPException(status_code=422, detail="A website camera image is required")
+    # Both laptop/phone cameras and Raspberry Pi cameras use the same generic
+    # face service. The Pi is only a camera device, not a required dependency.
+    engine_url = os.getenv("FACE_ENGINE_URL", "").strip()
+    if not engine_url:
+        raise HTTPException(
+            status_code=503,
+            detail="Face-only login is enabled, but FACE_ENGINE_URL is not configured",
+        )
+    engine_token = os.getenv("FACE_ENGINE_TOKEN", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if engine_token:
+        headers["X-Face-Engine-Token"] = engine_token
+    request = urllib.request.Request(
+        engine_url,
+        data=json.dumps({
+            "source": payload.source,
+            **({"face_image": payload.face_image} if payload.face_image else {}),
+        }).encode("utf-8"),
+        headers=headers,
+        method="POST",
     )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            match = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as reason:
+        raise HTTPException(status_code=503, detail="The configured face-verification service is unavailable") from reason
+    guardian_code = str(match.get("guardian_code", "")).strip()
+    if match.get("verified") is not True or not guardian_code:
+        raise HTTPException(status_code=403, detail="Guardian face could not be verified")
+    guardian = database.query(models.Guardian).filter(
+        models.Guardian.guardian_code == guardian_code
+    ).first()
     if guardian is None or guardian.face_status != "verified":
         raise HTTPException(status_code=403, detail="Guardian face could not be verified")
+    if isinstance(match.get("identity_match"), (int, float)):
+        guardian.identity_match = max(0, min(100, int(match["identity_match"])))
+        database.commit()
     return {"verified": True, "guardian": guardian_kiosk_profile(database, guardian)}
 
 

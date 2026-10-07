@@ -43,6 +43,18 @@ class SessionToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class AuditLog(Base):
+    """Append-only record of important database changes."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    entity_type: Mapped[str] = mapped_column(String(80), index=True)
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    details: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class Student(Base):
     __tablename__ = "students"
 

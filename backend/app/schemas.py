@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +22,7 @@ class AdminStudentCreate(BaseModel):
 
 
 class AdminGuardianCreate(BaseModel):
+    student_university_id: str = Field(min_length=2, max_length=30)
     full_name: str = Field(min_length=2, max_length=120)
     emirates_id: str = Field(min_length=5, max_length=40)
     email: str = Field(min_length=5, max_length=160)
@@ -60,8 +63,9 @@ class KioskScanRequest(BaseModel):
 
 
 class GuardianFaceVerifyRequest(BaseModel):
-    # Demo adapter input. A production Raspberry Pi sends the face-engine match.
-    guardian_code: str = Field(default="G-20001", min_length=3, max_length=30)
+    source: Literal["website", "raspberry_pi"] = "website"
+    # Website mode sends an image; Raspberry Pi mode captures directly on the Pi.
+    face_image: str | None = Field(default=None, min_length=100, max_length=4_000_000)
 
 
 class GuardianBatchAccessRequest(BaseModel):

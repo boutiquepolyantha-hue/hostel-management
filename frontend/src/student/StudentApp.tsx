@@ -51,6 +51,7 @@ interface GuardianSummary {
 
 interface GuardianRequest {
   id: number;
+  guardian_code: string;
   full_name: string;
   email: string;
   phone: string;
@@ -664,7 +665,7 @@ function GuardianManagementPage({ student }: { student: StudentProfileData }) {
     <section className="guardian-notice"><CheckCircle2 /><div><strong>Supervisor approval required</strong><p>New guardians remain pending until their details, relationship, and face enrollment are reviewed.</p></div></section>
     <div className="guardian-management-layout"><section className="student-white-card">
       <h2>Your guardians</h2>
-      {guardians.length ? <div className="guardian-list">{guardians.map(guardian => <div className="profile-guardian" key={guardian.id}><ShieldCheck /><div><strong>{guardian.full_name}</strong><p>{guardian.relationship} · <PhoneLink phone={guardian.phone} /><br />Face enrollment: {guardian.face_enrolled ? "captured" : "missing"}</p></div><StatusPill text={guardian.status === "approved" ? "Approved" : guardian.status === "rejected" ? "Rejected" : "Pending approval"} /></div>)}</div> : <p>No guardians added yet.</p>}
+      {guardians.length ? <div className="guardian-list">{guardians.map(guardian => <div className="profile-guardian" key={guardian.id}><ShieldCheck /><div><strong>{guardian.full_name}</strong><p>{guardian.relationship} · <PhoneLink phone={guardian.phone} /><br />Face enrollment: {guardian.face_enrolled ? "captured" : "missing"}<br />Guardian code: <strong>{guardian.status === "approved" ? guardian.guardian_code : "Assigned after approval"}</strong></p></div><StatusPill text={guardian.status === "approved" ? "Approved" : guardian.status === "rejected" ? "Rejected" : "Pending approval"} /></div>)}</div> : <p>No guardians added yet.</p>}
     </section>
     <section className="student-white-card guardian-request-form">
       <h2><UserPlus /> Add new guardian</h2><p>Capture the guardian’s face now; it is enrolled for their later face-only kiosk sign-in.</p>

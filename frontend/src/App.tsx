@@ -461,6 +461,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     face_image: null as string | null,
   });
   const [guardian, setGuardian] = useState({
+    student_university_id: "",
     full_name: "",
     emirates_id: "",
     email: "",
@@ -519,7 +520,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     try {
       await api("/admin/guardians", { method: "POST", body: JSON.stringify(guardian) });
       setMessage("Guardian account created. Relationship approval and face enrollment are separate steps.");
-      setGuardian((current) => ({ ...current, full_name: "", emirates_id: "", email: "", password: "", phone: "", city: "", relationship: "", face_image: null }));
+      setGuardian((current) => ({ ...current, student_university_id: "", full_name: "", emirates_id: "", email: "", password: "", phone: "", city: "", relationship: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
     } finally {
@@ -555,8 +556,9 @@ function UserManagement({ buildingId }: { buildingId: number }) {
         </form>
       ) : (
         <form className="user-form-card" onSubmit={submitGuardian}>
-          <div className="form-section-heading"><ShieldCheck /><div><h2>Guardian account</h2><p>Face enrollment and student relationship approval happen after account creation.</p></div></div>
+          <div className="form-section-heading"><ShieldCheck /><div><h2>Guardian account</h2><p>The student ID creates the guardian–student relationship request. Administration approval is still required before access.</p></div></div>
           <div className="form-grid">
+            <label>Related student university ID<input required value={guardian.student_university_id} onChange={(event) => setGuardian({ ...guardian, student_university_id: event.target.value })} placeholder="Example: 202500123" /></label>
             <label>Full name<input required value={guardian.full_name} onChange={(event) => setGuardian({ ...guardian, full_name: event.target.value })} /></label>
             <label>Emirates ID<input required value={guardian.emirates_id} onChange={(event) => setGuardian({ ...guardian, emirates_id: event.target.value })} /></label>
             <label>Email<input required type="email" value={guardian.email} onChange={(event) => setGuardian({ ...guardian, email: event.target.value })} /></label>
