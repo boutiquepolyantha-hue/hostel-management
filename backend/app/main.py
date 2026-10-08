@@ -162,12 +162,39 @@ def enroll_guardian_with_face_engine(guardian: models.Guardian) -> None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=12) as response:
+        # Render may need time to wake the face-engine service from sleep.
+        with urllib.request.urlopen(request, timeout=45) as response:
             result = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, ValueError) as reason:
         raise HTTPException(status_code=503, detail="The face-enrollment service is unavailable") from reason
     if result.get("enrolled") is not True:
         raise HTTPException(status_code=502, detail="The face-enrollment service rejected this guardian")
+
+
+def enroll_face_subject_with_engine(subject_code: str, face_image: str) -> None:
+    """Enroll a student face in the same engine used for guardian matching."""
+    engine_url = os.getenv("FACE_ENGINE_URL", "").strip()
+    if engine_url.endswith("/verify"):
+        engine_url = f"{engine_url[:-len('/verify')]}/enroll"
+    if not engine_url:
+        raise HTTPException(status_code=503, detail="FACE_ENGINE_URL is not configured")
+    headers = {"Content-Type": "application/json"}
+    token = os.getenv("FACE_ENGINE_TOKEN", "").strip()
+    if token:
+        headers["X-Face-Engine-Token"] = token
+    request = urllib.request.Request(
+        engine_url,
+        data=json.dumps({"subject_code": subject_code, "face_images": [face_image]}).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as reason:
+        raise HTTPException(status_code=503, detail="The configured face-enrollment service is unavailable") from reason
+    if result.get("enrolled") is not True:
+        raise HTTPException(status_code=502, detail="The face-enrollment service rejected this face")
 
 app = FastAPI(
     title="Hostel Access Management API",
@@ -274,6 +301,7 @@ def student_profile(database: Session, student: models.Student) -> dict:
         "active": student.is_active,
         "face_status": "enrolled" if student.face_image else "not_enrolled",
         "face_enrolled": bool(student.face_image),
+        "face_image": student.face_image,
         "guardian": guardian,
         "relationship": relationship,
         "last_access": (
@@ -656,6 +684,7 @@ def enroll_student_face(
     student: models.Student = Depends(require_student),
     database: Session = Depends(get_database),
 ):
+    enroll_face_subject_with_engine(student.university_id, payload.face_image)
     student.face_image = payload.face_image
     database.commit()
     return {"face_enrolled": True, "face_status": "enrolled"}
@@ -875,7 +904,8 @@ def verify_guardian_face(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
+        # Allow a cold-starting Render face engine enough time to respond.
+        with urllib.request.urlopen(request, timeout=45) as response:
             match = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, ValueError) as reason:
         raise HTTPException(status_code=503, detail="The configured face-verification service is unavailable") from reason
@@ -985,6 +1015,27 @@ def verify_student_face(
         raise HTTPException(status_code=409, detail="Request cannot be verified")
     if not student.face_image:
         raise HTTPException(status_code=422, detail="Complete face enrollment in your Student Profile first")
+
+    engine_url = os.getenv("FACE_ENGINE_URL", "").strip()
+    if not engine_url:
+        raise HTTPException(status_code=503, detail="FACE_ENGINE_URL is not configured")
+    headers = {"Content-Type": "application/json"}
+    engine_token = os.getenv("FACE_ENGINE_TOKEN", "").strip()
+    if engine_token:
+        headers["X-Face-Engine-Token"] = engine_token
+    verify_request = urllib.request.Request(
+        engine_url,
+        data=json.dumps({"source": "website", "face_image": payload.face_image, "expected_code": student.university_id}).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(verify_request, timeout=45) as response:
+            match = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as reason:
+        raise HTTPException(status_code=503, detail="The configured face-verification service is unavailable") from reason
+    if match.get("verified") is not True or match.get("subject_code") != student.university_id:
+        raise HTTPException(status_code=403, detail="Student face could not be verified")
 
     raw_token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(minutes=5)
