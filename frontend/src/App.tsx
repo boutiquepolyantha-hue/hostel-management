@@ -485,7 +485,6 @@ function UserManagement({ buildingId }: { buildingId: number }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [guardianToDelete, setGuardianToDelete] = useState("");
   const [student, setStudent] = useState({
     full_name: "",
     university_id: "",
@@ -538,7 +537,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
         method: "POST",
         body: JSON.stringify({ ...student, building_id: Number(student.building_id) }),
       });
-      setMessage("Student account created. Face enrollment can be completed next.");
+      setMessage("Student account created and face enrollment saved.");
       setStudent((current) => ({ ...current, full_name: "", university_id: "", email: "", password: "", phone: "", city: "", room_number: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
@@ -557,7 +556,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     setSaving(true);
     try {
       await api("/admin/guardians", { method: "POST", body: JSON.stringify(guardian) });
-      setMessage("Guardian account created. Relationship approval and face enrollment are separate steps.");
+      setMessage("Guardian account created and face enrollment saved. Relationship approval is pending.");
       setGuardian((current) => ({ ...current, student_university_id: "", full_name: "", emirates_id: "", email: "", password: "", phone: "", city: "", relationship: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
@@ -566,25 +565,6 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     }
   }
 
-  async function deleteGuardian() {
-    resetMessages();
-    const guardianId = Number(guardianToDelete);
-    if (!Number.isInteger(guardianId) || guardianId < 1) {
-      setError("Enter a valid guardian ID.");
-      return;
-    }
-    if (!window.confirm("Delete this guardian permanently? Their links and access requests will also be removed.")) return;
-    setSaving(true);
-    try {
-      await api(`/admin/guardians/${guardianId}`, { method: "DELETE" });
-      setMessage("Guardian deleted successfully.");
-      setGuardianToDelete("");
-    } catch (reason: any) {
-      setError(reason.message);
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <section className="user-management-page">
@@ -628,13 +608,6 @@ function UserManagement({ buildingId }: { buildingId: number }) {
           <FaceCapture label="Guardian face enrollment" onCapture={(face_image) => setGuardian({ ...guardian, face_image })} />
           <label className="checkbox-field"><input type="checkbox" checked={guardian.is_active} onChange={(event) => setGuardian({ ...guardian, is_active: event.target.checked })} /> Active guardian account</label>
           <button className="primary-button" disabled={saving}>{saving ? "Creating…" : "Create guardian"}</button>
-          <div className="danger-panel">
-            <div className="form-section-heading"><Trash2 /><div><h2>Delete guardian</h2><p>Use the guardian ID shown in Guardian Approvals. This permanently removes the guardian, relationships, and access requests.</p></div></div>
-            <div className="inline-danger-form">
-              <label>Guardian ID<input required type="number" min="1" value={guardianToDelete} onChange={(event) => setGuardianToDelete(event.target.value)} placeholder="Example: 42" /></label>
-              <button type="button" className="danger-button" disabled={saving} onClick={deleteGuardian}><Trash2 size={17} /> Delete guardian</button>
-            </div>
-          </div>
         </form>
       )}
     </section>
