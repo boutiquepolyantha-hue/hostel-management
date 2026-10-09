@@ -432,11 +432,13 @@ hr { border: 0; border-top: 1px solid #e1e8f1; margin: 22px 0; }
 .chat-panel form { display: flex; gap: 7px; padding: 10px; border-top: 1px solid #e3ebf4; }
 .chat-panel input { min-width: 0; flex: 1; border: 1px solid #c6d5e6; border-radius: 9px; padding: 9px 10px; font: inherit; }
 .chat-panel form button { display: grid; place-items: center; width: 39px; border: 0; border-radius: 9px; color: #fff; background: #0875ed; cursor: pointer; }
-.assistant-card { max-width: 920px; padding: 28px; border: 1px solid #d2e2f2; border-radius: 18px; background: #fff; box-shadow: 0 12px 30px rgba(26, 68, 112, .08); }
+.assistant-card { max-width: 1040px; padding: 28px; border: 1px solid #d2e2f2; border-radius: 18px; background: #fff; box-shadow: 0 12px 30px rgba(26, 68, 112, .08); }
 .assistant-card h1 { display: flex; align-items: center; gap: 10px; color: #123a70; }
-.assistant-group h3 { margin: 18px 0 8px; color: #345579; font-size: .95rem; }
-.assistant-prompts { display: flex; flex-wrap: wrap; gap: 9px; margin: 20px 0 14px; }
+.assistant-group { margin: 18px 0; padding: 14px 16px 10px; border: 1px solid #dbe8f5; border-radius: 14px; background: #fbfdff; }
+.assistant-group h3 { position: sticky; top: 0; z-index: 1; margin: 0 0 10px; padding-bottom: 9px; color: #345579; font-size: .95rem; border-bottom: 1px solid #e1ebf5; background: #fbfdff; }
+.assistant-prompts { display: flex; flex-wrap: wrap; gap: 9px; max-height: 150px; overflow-y: auto; padding: 2px 5px 8px 0; align-content: flex-start; }
 .assistant-prompts button { border: 1px solid #b8d5f3; border-radius: 999px; padding: 9px 13px; color: #075fbd; background: #f2f8ff; cursor: pointer; }
+.assistant-prompts button:hover { background: #e5f2ff; border-color: #77afe8; }
 .assistant-form { display: flex; gap: 9px; }
 .assistant-form input { min-width: 0; flex: 1; border: 1px solid #c6d5e6; border-radius: 9px; padding: 11px; font: inherit; }
 .assistant-answer { margin-top: 18px; padding: 15px; border-radius: 12px; color: #24486e; background: #f1f7fd; }
