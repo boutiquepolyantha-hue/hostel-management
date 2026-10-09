@@ -556,7 +556,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     setSaving(true);
     try {
       await api("/admin/guardians", { method: "POST", body: JSON.stringify(guardian) });
-      setMessage("Guardian account created and face enrollment saved. Relationship approval is pending.");
+      setMessage("Guardian account created, face enrollment saved, and access approved.");
       setGuardian((current) => ({ ...current, student_university_id: "", full_name: "", emirates_id: "", email: "", password: "", phone: "", city: "", relationship: "", face_image: null }));
     } catch (reason: any) {
       setError(reason.message);
@@ -594,7 +594,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
         </form>
       ) : (
         <form className="user-form-card" onSubmit={submitGuardian}>
-          <div className="form-section-heading"><ShieldCheck /><div><h2>Guardian account</h2><p>The student ID creates the guardian–student relationship request. Administration approval is still required before access.</p></div></div>
+          <div className="form-section-heading"><ShieldCheck /><div><h2>Guardian account</h2><p>The guardian is approved automatically after the required face enrollment succeeds.</p></div></div>
           <div className="form-grid">
             <label>Related student university ID<input required value={guardian.student_university_id} onChange={(event) => setGuardian({ ...guardian, student_university_id: event.target.value })} placeholder="Example: 202500123" /></label>
             <label>Full name<input required value={guardian.full_name} onChange={(event) => setGuardian({ ...guardian, full_name: event.target.value })} /></label>

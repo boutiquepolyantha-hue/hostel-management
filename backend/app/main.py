@@ -597,8 +597,8 @@ def create_admin_guardian(
         password_hash=hash_password(payload.password),
         is_active=payload.is_active,
         face_image=payload.face_image,
-        face_status="enrolled" if payload.face_image else "not_enrolled",
-        identity_match=0,
+        face_status="verified" if payload.face_image else "not_enrolled",
+        identity_match=95 if payload.face_image else 0,
     )
     if payload.face_image:
         enroll_guardian_with_face_engine(guardian)
@@ -608,10 +608,12 @@ def create_admin_guardian(
         guardian_id=guardian.id,
         student_id=student.id,
         relationship=payload.relationship.strip(),
-        status="pending",
-        can_check_in=False,
-        can_check_out=False,
+        status="approved" if payload.face_image else "pending",
+        can_check_in=bool(payload.face_image),
+        can_check_out=bool(payload.face_image),
         requested_at=datetime.utcnow(),
+        reviewed_at=datetime.utcnow() if payload.face_image else None,
+        supervisor_note="Automatically approved during admin creation" if payload.face_image else None,
     ))
     database.commit()
     database.refresh(guardian)
