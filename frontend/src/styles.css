@@ -427,6 +427,7 @@ hr { border: 0; border-top: 1px solid #e1e8f1; margin: 22px 0; }
 .chat-panel form button { display: grid; place-items: center; width: 39px; border: 0; border-radius: 9px; color: #fff; background: #0875ed; cursor: pointer; }
 .assistant-card { max-width: 920px; padding: 28px; border: 1px solid #d2e2f2; border-radius: 18px; background: #fff; box-shadow: 0 12px 30px rgba(26, 68, 112, .08); }
 .assistant-card h1 { display: flex; align-items: center; gap: 10px; color: #123a70; }
+.assistant-group h3 { margin: 18px 0 8px; color: #345579; font-size: .95rem; }
 .assistant-prompts { display: flex; flex-wrap: wrap; gap: 9px; margin: 20px 0 14px; }
 .assistant-prompts button { border: 1px solid #b8d5f3; border-radius: 999px; padding: 9px 13px; color: #075fbd; background: #f2f8ff; cursor: pointer; }
 .assistant-form { display: flex; gap: 9px; }

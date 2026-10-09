@@ -1350,6 +1350,41 @@ def admin_assistant(
         models.Student.building_id.in_(building_ids), models.EntryExitRecord.action == "check_out",
         models.EntryExitRecord.occurred_at >= late_cutoff,
     ).order_by(models.EntryExitRecord.occurred_at.desc()).all()
+    today_records = database.query(models.EntryExitRecord, models.Student).join(
+        models.Student, models.EntryExitRecord.student_id == models.Student.id
+    ).filter(models.Student.building_id.in_(building_ids), models.EntryExitRecord.occurred_at >= today_start).order_by(models.EntryExitRecord.occurred_at.desc()).all()
+    all_students = database.query(models.Student).filter(models.Student.building_id.in_(building_ids)).order_by(models.Student.full_name).all()
+    approved_links = database.query(models.GuardianStudentLink.student_id).join(models.Student).filter(
+        models.Student.building_id.in_(building_ids), models.GuardianStudentLink.status == "approved"
+    ).all()
+    no_guardian = [s for s in all_students if s.id not in {row[0] for row in approved_links}]
+    no_student_face = [s for s in all_students if not s.face_image]
+    guardians = database.query(models.Guardian).join(models.GuardianStudentLink).join(models.Student).filter(
+        models.Student.building_id.in_(building_ids)
+    ).distinct().order_by(models.Guardian.full_name).all()
+    no_guardian_face = [g for g in guardians if not g.face_image]
+    failed_faces = [(record, student) for record, student in today_records if record.face_status == "failed"]
+    expired_qrs = database.query(models.DormAccessRequest, models.Student).join(models.Student).filter(
+        models.Student.building_id.in_(building_ids), models.DormAccessRequest.status == "expired"
+    ).order_by(models.DormAccessRequest.created_at.desc()).limit(100).all()
+    used_qrs = database.query(models.DormAccessRequest, models.Student).join(models.Student).filter(
+        models.Student.building_id.in_(building_ids), models.DormAccessRequest.used_at.isnot(None)
+    ).order_by(models.DormAccessRequest.used_at.desc()).limit(100).all()
+    rejected = database.query(models.GuardianStudentLink, models.Guardian, models.Student).join(
+        models.Guardian, models.GuardianStudentLink.guardian_id == models.Guardian.id
+    ).join(models.Student, models.GuardianStudentLink.student_id == models.Student.id).filter(
+        models.Student.building_id.in_(building_ids), models.GuardianStudentLink.status == "rejected"
+    ).all()
+    approved = database.query(models.GuardianStudentLink, models.Guardian, models.Student).join(
+        models.Guardian, models.GuardianStudentLink.guardian_id == models.Guardian.id
+    ).join(models.Student, models.GuardianStudentLink.student_id == models.Student.id).filter(
+        models.Student.building_id.in_(building_ids), models.GuardianStudentLink.status == "approved"
+    ).all()
+    tamam_rows = database.query(models.TamamRecord, models.Student).join(models.Student).filter(
+        models.Student.building_id.in_(building_ids), models.TamamRecord.record_date == date.today().isoformat()
+    ).all()
+    incomplete_tamam = [(record, student) for record, student in tamam_rows if record.status != "completed"]
+    bus_trips = database.query(models.BusTrip).filter(models.BusTrip.building_id.in_(building_ids)).order_by(models.BusTrip.departure_at).limit(100).all()
 
     if any(term in question for term in ("outside", "currently out", "not inside")):
         rows = [_assistant_item(s, status="outside") for s in outside]
@@ -1357,6 +1392,41 @@ def admin_assistant(
     if any(term in question for term in ("late", "late check", "late checkout", "late check-out")):
         rows = [_assistant_item(s, occurred_at=record.occurred_at.isoformat()) for record, s in late_rows]
         return {"answer": f"{len(rows)} late check-out(s) found today. Late means after 20:00.", "items": rows}
+    if "inside" in question and "outside" not in question:
+        rows = [_assistant_item(s, status="inside") for s in all_students if s.current_status == "inside"]
+        return {"answer": f"{len(rows)} student(s) are currently inside.", "items": rows}
+    if "no guardian" in question:
+        return {"answer": f"{len(no_guardian)} student(s) have no approved guardian.", "items": [_assistant_item(s) for s in no_guardian]}
+    if "no face" in question and "guardian" not in question:
+        return {"answer": f"{len(no_student_face)} student(s) have no face enrollment.", "items": [_assistant_item(s) for s in no_student_face]}
+    if "guardian" in question and "no face" in question:
+        return {"answer": f"{len(no_guardian_face)} guardian(s) have no face enrollment.", "items": [{"guardian": g.full_name, "email": g.email} for g in no_guardian_face]}
+    if "failed" in question and "face" in question:
+        return {"answer": f"{len(failed_faces)} failed face verification(s) occurred today.", "items": [_assistant_item(s, occurred_at=r.occurred_at.isoformat()) for r, s in failed_faces]}
+    if "expired" in question and "qr" in question:
+        return {"answer": f"{len(expired_qrs)} expired QR code(s) found.", "items": [_assistant_item(s, status="expired") for _r, s in expired_qrs]}
+    if "used" in question and "qr" in question:
+        return {"answer": f"{len(used_qrs)} used QR code(s) found.", "items": [_assistant_item(s, status="used") for _r, s in used_qrs]}
+    if "rejected" in question:
+        return {"answer": f"{len(rejected)} rejected relationship(s) found.", "items": [{"guardian": g.full_name, "student": s.full_name, "relationship": l.relationship} for l, g, s in rejected]}
+    if "approved" in question and "guardian" in question:
+        return {"answer": f"{len(approved)} approved guardian relationship(s) found.", "items": [{"guardian": g.full_name, "student": s.full_name, "relationship": l.relationship} for l, g, s in approved]}
+    if "tamam" in question or "completion" in question:
+        completed = len(tamam_rows) - len(incomplete_tamam)
+        percent = round((completed / len(tamam_rows)) * 100) if tamam_rows else 0
+        rows = [_assistant_item(s, status=r.status) for r, s in (incomplete_tamam if "incomplete" in question or "missed" in question else tamam_rows)]
+        return {"answer": f"Today’s Tamam completion is {percent}% ({completed}/{len(tamam_rows)}).", "items": rows}
+    if "bus" in question:
+        return {"answer": f"{len(bus_trips)} bus trip(s) are listed.", "items": [{"bus": b.bus_number, "destination": b.destination, "status": b.status, "departure": b.departure_at.isoformat()} for b in bus_trips]}
+    if "check-in" in question or "check in" in question or "check-out" in question or "check out" in question:
+        action = "check_in" if "check-in" in question or "check in" in question else "check_out"
+        rows = [_assistant_item(s, occurred_at=r.occurred_at.isoformat(), action=action) for r, s in today_records if r.action == action]
+        return {"answer": f"{len(rows)} {action.replace('_', '-')} record(s) today.", "items": rows}
+    if "all students" in question or "building" in question or "registered" in question:
+        return {"answer": f"{len(all_students)} student(s) are assigned to your buildings.", "items": [_assistant_item(s, building_id=str(s.building_id), room=s.room_number, status=s.current_status) for s in all_students]}
+    if "recent" in question or "activity" in question:
+        rows = [_assistant_item(s, action=r.action, occurred_at=r.occurred_at.isoformat()) for r, s in today_records[:100]]
+        return {"answer": f"Showing {len(rows)} recent access record(s).", "items": rows}
     if any(term in question for term in ("pending", "approval", "guardian")):
         rows = [{"guardian": guardian.full_name, "student": student.full_name, "relationship": link.relationship} for link, guardian, student in pending]
         return {"answer": f"{len(rows)} guardian approval(s) are pending.", "items": rows}

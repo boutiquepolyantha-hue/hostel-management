@@ -450,6 +450,13 @@ function AdminAssistant() {
   const [answer, setAnswer] = useState("");
   const [items, setItems] = useState<Array<Record<string, string>>>([]);
   const [loading, setLoading] = useState(false);
+  const promptGroups = {
+    "Students": ["Which students are currently outside?", "Which students are currently inside?", "Show all students with no face enrollment."],
+    "Guardians": ["Which guardians have pending approvals?", "Show all approved guardians.", "Which guardians have no face enrollment?"],
+    "Access & QR": ["Show today’s check-ins.", "Show today’s check-outs.", "Show failed face-verification attempts.", "Show expired QR codes."],
+    "Tamam & buses": ["Show today’s Daily Tamam completion rate.", "Show all incomplete Tamam records.", "What buses are scheduled today?"],
+    "Reports": ["Show all recent access activity.", "How many students are currently outside?", "How many check-outs occurred today?"],
+  };
   const ask = async (value = question) => {
     if (!value.trim()) return;
     setQuestion(value); setLoading(true);
@@ -463,9 +470,7 @@ function AdminAssistant() {
     <p className="eyebrow">Grounded in your saved records</p>
     <h1><MessageCircle /> AI Administration Assistant</h1>
     <p className="muted">Ask about students outside, late check-outs, or pending guardian approvals.</p>
-    <div className="assistant-prompts">
-      {["Which students are currently outside?", "Show today’s late check-outs.", "Which guardians have pending approvals?"].map(prompt => <button key={prompt} onClick={() => ask(prompt)}>{prompt}</button>)}
-    </div>
+    {Object.entries(promptGroups).map(([group, prompts]) => <div className="assistant-group" key={group}><h3>{group}</h3><div className="assistant-prompts">{prompts.map(prompt => <button key={prompt} onClick={() => ask(prompt)}>{prompt}</button>)}</div></div>)}
     <form className="assistant-form" onSubmit={event => { event.preventDefault(); void ask(); }}><input value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ask the administrator assistant…" /><button className="primary-button" disabled={loading}>{loading ? "Thinking…" : "Ask"}</button></form>
     {answer && <div className="assistant-answer"><strong>{answer}</strong>{items.length > 0 && <ul>{items.map((item, index) => <li key={index}>{Object.entries(item).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value}`).join(" · ")}</li>)}</ul>}</div>}
   </section>;
