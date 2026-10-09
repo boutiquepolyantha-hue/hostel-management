@@ -909,6 +909,16 @@ def verify_guardian_face(
         # Allow a cold-starting Render face engine enough time to respond.
         with urllib.request.urlopen(request, timeout=45) as response:
             match = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as reason:
+        # Do not hide a face-engine validation/authentication error as a network
+        # outage.  The engine's OpenAPI contract returns useful JSON details
+        # (for example a missing token or an invalid request body).
+        try:
+            engine_detail = json.loads(reason.read().decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            engine_detail = {"detail": "Face engine rejected the verification request"}
+        detail = engine_detail.get("detail", "Face engine rejected the verification request") if isinstance(engine_detail, dict) else "Face engine rejected the verification request"
+        raise HTTPException(status_code=502, detail=f"Face engine error ({reason.code}): {detail}") from reason
     except (urllib.error.URLError, TimeoutError, ValueError) as reason:
         raise HTTPException(status_code=503, detail="The configured face-verification service is unavailable") from reason
     guardian_code = str(match.get("guardian_code", "")).strip()
