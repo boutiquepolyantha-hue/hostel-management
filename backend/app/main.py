@@ -24,6 +24,8 @@ from app.schemas import (
     GuardianRequestCreate,
     AdminGuardianCreate,
     AdminStudentCreate,
+    AssistantQuestion,
+    GuardianAssistantQuestion,
     KioskScanRequest,
     LoginRequest,
     RelationshipReview,
@@ -1315,6 +1317,106 @@ def dashboard(
         "pending_guardian_approvals": pending,
         "recent_activity": recent,
     }
+
+
+def _assistant_item(student: models.Student, **values) -> dict:
+    return {"student": student.full_name, "university_id": student.university_id, **values}
+
+
+@app.post("/admin/assistant")
+def admin_assistant(
+    payload: AssistantQuestion,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    """Grounded answers for common supervisor questions."""
+    question = payload.question.lower().strip()
+    building_ids = [row.building_id for row in database.query(models.SupervisorBuilding).filter(
+        models.SupervisorBuilding.supervisor_id == supervisor.id
+    ).all()]
+    outside = database.query(models.Student).filter(
+        models.Student.building_id.in_(building_ids), models.Student.current_status == "outside"
+    ).order_by(models.Student.full_name).all()
+    pending = database.query(models.GuardianStudentLink, models.Guardian, models.Student).join(
+        models.Guardian, models.GuardianStudentLink.guardian_id == models.Guardian.id
+    ).join(models.Student, models.GuardianStudentLink.student_id == models.Student.id).filter(
+        models.Student.building_id.in_(building_ids), models.GuardianStudentLink.status == "pending"
+    ).all()
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    late_cutoff = today_start + timedelta(hours=20)
+    late_rows = database.query(models.EntryExitRecord, models.Student).join(
+        models.Student, models.EntryExitRecord.student_id == models.Student.id
+    ).filter(
+        models.Student.building_id.in_(building_ids), models.EntryExitRecord.action == "check_out",
+        models.EntryExitRecord.occurred_at >= late_cutoff,
+    ).order_by(models.EntryExitRecord.occurred_at.desc()).all()
+
+    if any(term in question for term in ("outside", "currently out", "not inside")):
+        rows = [_assistant_item(s, status="outside") for s in outside]
+        return {"answer": f"{len(rows)} student(s) are currently outside.", "items": rows}
+    if any(term in question for term in ("late", "late check", "late checkout", "late check-out")):
+        rows = [_assistant_item(s, occurred_at=record.occurred_at.isoformat()) for record, s in late_rows]
+        return {"answer": f"{len(rows)} late check-out(s) found today. Late means after 20:00.", "items": rows}
+    if any(term in question for term in ("pending", "approval", "guardian")):
+        rows = [{"guardian": guardian.full_name, "student": student.full_name, "relationship": link.relationship} for link, guardian, student in pending]
+        return {"answer": f"{len(rows)} guardian approval(s) are pending.", "items": rows}
+    return {"answer": "Ask about students currently outside, today’s late check-outs, or pending guardian approvals.", "items": []}
+
+
+@app.post("/student/chat")
+def student_chat(
+    payload: AssistantQuestion,
+    student: models.Student = Depends(require_student),
+    database: Session = Depends(get_database),
+):
+    """A small grounded help assistant for students and their guardians."""
+    question = payload.question.lower().strip()
+    if any(term in question for term in ("rule", "rules", "allowed", "policy")):
+        return {"answer": "Dorm access requires an approved guardian request, successful face verification, and a valid single-use QR code. QR codes expire after five minutes."}
+    if any(term in question for term in ("status", "inside", "outside", "where")):
+        return {"answer": f"Your current dorm status is: {student.current_status.replace('_', ' ')}."}
+    if "bus" in question:
+        trips = database.query(models.BusTrip).filter(models.BusTrip.building_id == student.building_id).order_by(models.BusTrip.departure_at).limit(5).all()
+        if not trips:
+            return {"answer": "There are no bus trips currently listed for your building."}
+        return {"answer": "Upcoming bus trips: " + "; ".join(f"{trip.bus_number} to {trip.destination} ({trip.status})" for trip in trips)}
+    access = database.query(models.DormAccessRequest).filter(
+        models.DormAccessRequest.student_id == student.id,
+        models.DormAccessRequest.status.in_(["student_face_pending", "face_pending", "qr_active"]),
+    ).order_by(models.DormAccessRequest.created_at.desc()).first()
+    if any(term in question for term in ("qr", "code", "request", "check in", "check-in", "check out", "check-out")):
+        if access is None:
+            return {"answer": "You have no active access request. Ask an approved guardian to submit a check-in or check-out request."}
+        return {"answer": f"Your active {access.action.replace('_', ' ')} request is {access.status.replace('_', ' ')}. Complete face verification to receive the QR code."}
+    return {"answer": "I can answer questions about your access request, QR code, dorm rules, bus trips, and current check-in status."}
+
+
+@app.post("/kiosk/guardian/chat")
+def guardian_chat(
+    payload: GuardianAssistantQuestion,
+    database: Session = Depends(get_database),
+):
+    question = payload.question.lower().strip()
+    guardian = database.get(models.Guardian, payload.guardian_id)
+    if guardian is None:
+        raise HTTPException(status_code=404, detail="Guardian not found")
+    linked_students = database.query(models.Student).join(models.GuardianStudentLink).filter(
+        models.GuardianStudentLink.guardian_id == guardian.id,
+        models.GuardianStudentLink.status == "approved",
+    ).all()
+    if any(term in question for term in ("rule", "rules", "policy")):
+        return {"answer": "Dorm access requires an approved guardian relationship, the student's face verification, and a valid single-use QR code."}
+    if "bus" in question:
+        return {"answer": "Bus schedules and destinations are shown in the administration Bus Trips section. Ask administration if you need a schedule change."}
+    if any(term in question for term in ("status", "inside", "outside", "where")):
+        return {"answer": "; ".join(f"{s.full_name}: {s.current_status.replace('_', ' ')}" for s in linked_students) or "No approved students are linked to your account."}
+    if any(term in question for term in ("request", "qr", "code", "check in", "check-out", "check out")):
+        active = database.query(models.DormAccessRequest).filter(
+            models.DormAccessRequest.guardian_id == guardian.id,
+            models.DormAccessRequest.status.in_(["student_face_pending", "face_pending", "qr_active"]),
+        ).order_by(models.DormAccessRequest.created_at.desc()).first()
+        return {"answer": f"Your latest access request is {active.status.replace('_', ' ')} for {active.action.replace('_', ' ')}." if active else "You have no active access request. Select an approved student to send one."}
+    return {"answer": "I can answer questions about access requests, QR codes, dorm rules, bus trips, and linked student status."}
 
 
 @app.get("/buildings/{building_id}/students")

@@ -37,6 +37,7 @@ import {
 import { QRCodeSVG } from "qrcode.react";
 
 import { api } from "../api";
+import { ChatAssistant } from "../ChatAssistant";
 import "./student.css";
 
 
@@ -75,6 +76,7 @@ interface StudentProfileData {
   active: boolean;
   face_status: string;
   face_enrolled: boolean;
+  face_image: string | null;
   guardian: GuardianSummary | null;
   relationship: string | null;
   last_access: {
@@ -272,6 +274,7 @@ function StudentPage({
         <section className="student-workspace">
           <header className="student-topbar"><Bell /><div className="student-avatar">{initials(student.full_name)}</div><strong>{student.full_name}</strong><ChevronRight /></header>
           {children}
+          <ChatAssistant endpoint="/student/chat" title="Student help assistant" />
         </section>
       </div>
     </main>
@@ -503,6 +506,7 @@ function FaceAndQrPage({ student }: { student: StudentProfileData }) {
         {!result ? (
           <section className="face-card">
             <h2><Camera /> Complete Face Verification</h2>
+            {student.face_image && <div className="enrolled-face-reference"><img src={student.face_image} alt="Your saved face verification photo" /><div><strong>Saved verification photo</strong><small>This photo is reused for check-in and check-out verification.</small></div></div>}
             <div className="camera-frame">
               {cameraActive
                 ? <video ref={videoRef} autoPlay playsInline muted />
@@ -560,7 +564,7 @@ function StudentIdPage({ student }: { student: StudentProfileData }) {
           <div><h1>University Student ID</h1></div>
         </header>
         <section className="digital-id">
-          <div className="id-photo"><UserRound size={100} strokeWidth={1.15} /></div>
+          <div className="id-photo">{student.face_image ? <img src={student.face_image} alt="Student face verification photo" /> : <UserRound size={100} strokeWidth={1.15} />}</div>
           <h2>{student.full_name}</h2>
           <dl>
             <dt>University ID</dt><dd>{student.university_id}</dd>

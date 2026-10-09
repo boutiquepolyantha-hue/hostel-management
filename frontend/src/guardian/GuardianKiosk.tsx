@@ -5,6 +5,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { ChatAssistant } from "../ChatAssistant";
 import "./guardian.css";
 
 type Action = "check_in" | "check_out";
@@ -205,6 +206,7 @@ export function GuardianKiosk() {
         <div className="expiry">The QR is created only after student face verification, is valid for five minutes, and can be scanned once.</div>
         <button className="gk-primary" onClick={reset}>Done</button>
       </section>}
+      {guardian && <ChatAssistant endpoint="/kiosk/guardian/chat" extraBody={{ guardian_id: guardian.id }} title="Guardian help assistant" />}
     </main>
   );
 }

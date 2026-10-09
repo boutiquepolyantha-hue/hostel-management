@@ -13,6 +13,7 @@ import {
   Home,
   LogOut,
   MapPin,
+  MessageCircle,
   Search,
   ShieldCheck,
   UserCheck,
@@ -368,6 +369,7 @@ function Topbar({
 
 const NAVIGATION = [
   { key: "overview", label: "Overview", icon: <Home /> },
+  { key: "assistant", label: "AI Assistant", icon: <MessageCircle /> },
   { key: "entry-exit", label: "Entry & Exit", icon: <ArrowLeftRight /> },
   { key: "tamam", label: "Daily Tamam", icon: <ClipboardCheck /> },
   { key: "buses", label: "Bus Trips", icon: <Bus /> },
@@ -431,6 +433,7 @@ function AdminLayout({
       <main className="admin-content">
         <button className="secondary-button page-export" onClick={exportBuildingData}>Export to Excel</button>
         {section === "overview" && <Overview buildingId={id} />}
+        {section === "assistant" && <AdminAssistant />}
         {section === "entry-exit" && <EntryExit buildingId={id} />}
         {section === "tamam" && <Tamam buildingId={id} />}
         {section === "buses" && <Buses buildingId={id} />}
@@ -439,6 +442,33 @@ function AdminLayout({
       </main>
     </div>
   );
+}
+
+
+function AdminAssistant() {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [items, setItems] = useState<Array<Record<string, string>>>([]);
+  const [loading, setLoading] = useState(false);
+  const ask = async (value = question) => {
+    if (!value.trim()) return;
+    setQuestion(value); setLoading(true);
+    try {
+      const result = await api<{ answer: string; items: Array<Record<string, string>> }>("/admin/assistant", { method: "POST", body: JSON.stringify({ question: value }) });
+      setAnswer(result.answer); setItems(result.items ?? []);
+    } catch (reason) { setAnswer(reason instanceof Error ? reason.message : "Assistant unavailable"); setItems([]); }
+    finally { setLoading(false); }
+  };
+  return <section className="assistant-card">
+    <p className="eyebrow">Grounded in your saved records</p>
+    <h1><MessageCircle /> AI Administration Assistant</h1>
+    <p className="muted">Ask about students outside, late check-outs, or pending guardian approvals.</p>
+    <div className="assistant-prompts">
+      {["Which students are currently outside?", "Show today’s late check-outs.", "Which guardians have pending approvals?"].map(prompt => <button key={prompt} onClick={() => ask(prompt)}>{prompt}</button>)}
+    </div>
+    <form className="assistant-form" onSubmit={event => { event.preventDefault(); void ask(); }}><input value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ask the administrator assistant…" /><button className="primary-button" disabled={loading}>{loading ? "Thinking…" : "Ask"}</button></form>
+    {answer && <div className="assistant-answer"><strong>{answer}</strong>{items.length > 0 && <ul>{items.map((item, index) => <li key={index}>{Object.entries(item).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value}`).join(" · ")}</li>)}</ul>}</div>}
+  </section>;
 }
 
 

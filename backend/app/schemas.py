@@ -62,6 +62,14 @@ class StudentFaceVerifyRequest(BaseModel):
     face_image: str = Field(min_length=100, max_length=4_000_000)
 
 
+class AssistantQuestion(BaseModel):
+    question: str = Field(min_length=2, max_length=500)
+
+
+class GuardianAssistantQuestion(AssistantQuestion):
+    guardian_id: int
+
+
 class AccessRequestCreate(BaseModel):
     action: str
 
