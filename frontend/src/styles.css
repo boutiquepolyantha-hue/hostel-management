@@ -245,6 +245,13 @@ input:focus, textarea:focus { outline: 3px solid rgba(11,99,229,.14); border-col
 .face-capture-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
 .face-captured { color: #08753f; font-weight: 750; }
 .face-capture-error { color: #bd1732; margin: 12px 0 0; }
+.danger-panel { margin-top: 28px; padding: 18px; border: 1px solid #f0b7be; border-radius: 13px; background: #fff7f8; }
+.inline-danger-form { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.danger-button { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 9px; padding: 12px 16px; background: #b42335; color: #fff; font-weight: 750; cursor: pointer; }
+.danger-button:disabled { opacity: .55; cursor: not-allowed; }
+.guardian-detail-actions { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin: 18px 0; }
+.guardian-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 12px; flex: 1; }
+.guardian-edit-grid > div { display: flex; gap: 8px; align-items: end; }
 @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } .user-form-card { padding: 20px; } }
 .sidebar nav { display: grid; gap: 6px; }
 .sidebar button { border: 0; background: transparent; color: #324c77; border-radius: 9px; padding: 11px 9px; display: flex; align-items: center; gap: 11px; text-align: left; font-weight: 650; font-size: .82rem; }

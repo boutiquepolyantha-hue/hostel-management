@@ -16,6 +16,7 @@ import {
   MessageCircle,
   Search,
   ShieldCheck,
+  Trash2,
   UserCheck,
   UserPlus,
   Users,
@@ -484,6 +485,7 @@ function UserManagement({ buildingId }: { buildingId: number }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [guardianToDelete, setGuardianToDelete] = useState("");
   const [student, setStudent] = useState({
     full_name: "",
     university_id: "",
@@ -564,6 +566,26 @@ function UserManagement({ buildingId }: { buildingId: number }) {
     }
   }
 
+  async function deleteGuardian() {
+    resetMessages();
+    const guardianId = Number(guardianToDelete);
+    if (!Number.isInteger(guardianId) || guardianId < 1) {
+      setError("Enter a valid guardian ID.");
+      return;
+    }
+    if (!window.confirm("Delete this guardian permanently? Their links and access requests will also be removed.")) return;
+    setSaving(true);
+    try {
+      await api(`/admin/guardians/${guardianId}`, { method: "DELETE" });
+      setMessage("Guardian deleted successfully.");
+      setGuardianToDelete("");
+    } catch (reason: any) {
+      setError(reason.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="user-management-page">
       <PageTitle title="Add users" subtitle="Create student and guardian accounts for the selected building." />
@@ -606,6 +628,13 @@ function UserManagement({ buildingId }: { buildingId: number }) {
           <FaceCapture label="Guardian face enrollment" onCapture={(face_image) => setGuardian({ ...guardian, face_image })} />
           <label className="checkbox-field"><input type="checkbox" checked={guardian.is_active} onChange={(event) => setGuardian({ ...guardian, is_active: event.target.checked })} /> Active guardian account</label>
           <button className="primary-button" disabled={saving}>{saving ? "Creating…" : "Create guardian"}</button>
+          <div className="danger-panel">
+            <div className="form-section-heading"><Trash2 /><div><h2>Delete guardian</h2><p>Use the guardian ID shown in Guardian Approvals. This permanently removes the guardian, relationships, and access requests.</p></div></div>
+            <div className="inline-danger-form">
+              <label>Guardian ID<input required type="number" min="1" value={guardianToDelete} onChange={(event) => setGuardianToDelete(event.target.value)} placeholder="Example: 42" /></label>
+              <button type="button" className="danger-button" disabled={saving} onClick={deleteGuardian}><Trash2 size={17} /> Delete guardian</button>
+            </div>
+          </div>
         </form>
       )}
     </section>
@@ -1080,6 +1109,8 @@ function GuardianApprovals({ buildingId }: { buildingId: number }) {
   const [filter, setFilter] = useState("pending");
   const [search, setSearch] = useState("");
   const [note, setNote] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editGuardian, setEditGuardian] = useState({ full_name: "", phone: "", city: "", relationship: "", is_active: true });
 
   function load() {
     api<GuardianLink[]>(
@@ -1100,6 +1131,28 @@ function GuardianApprovals({ buildingId }: { buildingId: number }) {
   }, [buildingId, filter, search]);
 
   const selected = links.find((link) => link.id === selectedId) ?? null;
+
+  useEffect(() => {
+    if (selected) {
+      setEditGuardian({ full_name: selected.guardian.full_name, phone: selected.guardian.phone, city: selected.guardian.city, relationship: selected.relationship, is_active: true });
+      setEditing(false);
+    }
+  }, [selectedId]);
+
+  async function saveGuardian() {
+    if (!selected) return;
+    await api(`/admin/guardians/${selected.guardian.id}`, { method: "PATCH", body: JSON.stringify(editGuardian) });
+    setEditing(false);
+    load();
+  }
+
+  async function deleteSelectedGuardian() {
+    if (!selected) return;
+    if (!window.confirm(`Delete ${selected.guardian.full_name} permanently?`)) return;
+    await api(`/admin/guardians/${selected.guardian.id}`, { method: "DELETE" });
+    setSelectedId(null);
+    load();
+  }
 
   async function review(decision: "approved" | "rejected") {
     if (!selected) return;
@@ -1165,6 +1218,18 @@ function GuardianApprovals({ buildingId }: { buildingId: number }) {
                   <dt>Face verification</dt><dd><StatusBadge value={selected.guardian.face_status} /></dd>
                   <dt>Identity match</dt><dd><strong>{selected.guardian.identity_match}%</strong></dd>
                 </dl>
+              </div>
+              <div className="guardian-detail-actions">
+                {!editing ? <button className="secondary-button" onClick={() => setEditing(true)}>Edit guardian details</button> : (
+                  <div className="guardian-edit-grid">
+                    <label>Full name<input value={editGuardian.full_name} onChange={(event) => setEditGuardian({ ...editGuardian, full_name: event.target.value })} /></label>
+                    <label>Phone<input value={editGuardian.phone} onChange={(event) => setEditGuardian({ ...editGuardian, phone: event.target.value })} /></label>
+                    <label>City<input value={editGuardian.city} onChange={(event) => setEditGuardian({ ...editGuardian, city: event.target.value })} /></label>
+                    <label>Relationship<input value={editGuardian.relationship} onChange={(event) => setEditGuardian({ ...editGuardian, relationship: event.target.value })} /></label>
+                    <div><button className="primary-button" onClick={saveGuardian}>Save changes</button> <button className="secondary-button" onClick={() => setEditing(false)}>Cancel</button></div>
+                  </div>
+                )}
+                <button className="danger-button" onClick={deleteSelectedGuardian}><Trash2 size={17} /> Delete guardian</button>
               </div>
               <hr />
               <h3>Requested student relationship</h3>

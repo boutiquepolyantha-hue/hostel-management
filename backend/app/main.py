@@ -23,6 +23,7 @@ from app.schemas import (
     StudentFaceVerifyRequest,
     GuardianRequestCreate,
     AdminGuardianCreate,
+    AdminGuardianUpdate,
     AdminStudentCreate,
     AssistantQuestion,
     GuardianAssistantQuestion,
@@ -537,6 +538,8 @@ def create_admin_student(
         is_active=payload.is_active,
         face_image=payload.face_image,
     )
+    if payload.face_image:
+        enroll_face_subject_with_engine(student.university_id, payload.face_image)
     database.add(student)
     database.flush()
     database.add(models.StudentCredential(
@@ -583,6 +586,8 @@ def create_admin_guardian(
         face_status="enrolled" if payload.face_image else "not_enrolled",
         identity_match=0,
     )
+    if payload.face_image:
+        enroll_guardian_with_face_engine(guardian)
     database.add(guardian)
     database.flush()
     database.add(models.GuardianStudentLink(
@@ -611,6 +616,74 @@ def create_admin_guardian(
             "relationship_status": "pending",
         }
     }
+
+
+@app.delete("/admin/guardians/{guardian_id}")
+def delete_admin_guardian(
+    guardian_id: int,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    """Permanently remove a guardian and its access relationships."""
+    guardian = database.get(models.Guardian, guardian_id)
+    if guardian is None:
+        raise HTTPException(status_code=404, detail="Guardian not found")
+    linked_buildings = database.query(models.Student.building_id).join(
+        models.GuardianStudentLink,
+        models.GuardianStudentLink.student_id == models.Student.id,
+    ).filter(models.GuardianStudentLink.guardian_id == guardian_id).distinct().all()
+    if not any(
+        database.query(models.SupervisorBuilding).filter(
+            models.SupervisorBuilding.supervisor_id == supervisor.id,
+            models.SupervisorBuilding.building_id == building_id,
+        ).first()
+        for (building_id,) in linked_buildings
+    ):
+        raise HTTPException(status_code=403, detail="You are not assigned to this guardian's building")
+
+    database.query(models.DormAccessRequest).filter(
+        models.DormAccessRequest.guardian_id == guardian_id
+    ).delete(synchronize_session=False)
+    database.query(models.EntryExitRecord).filter(
+        models.EntryExitRecord.guardian_id == guardian_id
+    ).update({models.EntryExitRecord.guardian_id: None}, synchronize_session=False)
+    database.query(models.GuardianStudentLink).filter(
+        models.GuardianStudentLink.guardian_id == guardian_id
+    ).delete(synchronize_session=False)
+    database.delete(guardian)
+    database.commit()
+    return {"deleted": True, "guardian_id": guardian_id}
+
+
+@app.patch("/admin/guardians/{guardian_id}")
+def update_admin_guardian(
+    guardian_id: int,
+    payload: AdminGuardianUpdate,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    guardian = database.get(models.Guardian, guardian_id)
+    if guardian is None:
+        raise HTTPException(status_code=404, detail="Guardian not found")
+    linked_buildings = database.query(models.Student.building_id).join(
+        models.GuardianStudentLink,
+        models.GuardianStudentLink.student_id == models.Student.id,
+    ).filter(models.GuardianStudentLink.guardian_id == guardian_id).distinct().all()
+    if not any(
+        database.query(models.SupervisorBuilding).filter(
+            models.SupervisorBuilding.supervisor_id == supervisor.id,
+            models.SupervisorBuilding.building_id == building_id,
+        ).first()
+        for (building_id,) in linked_buildings
+    ):
+        raise HTTPException(status_code=403, detail="You are not assigned to this guardian's building")
+    guardian.full_name = payload.full_name.strip()
+    guardian.phone = payload.phone.strip()
+    guardian.city = payload.city.strip()
+    guardian.relationship = payload.relationship.strip()
+    guardian.is_active = payload.is_active
+    database.commit()
+    return {"updated": True, "guardian_id": guardian_id}
 
 
 @app.post("/auth/logout")
@@ -686,6 +759,8 @@ def enroll_student_face(
     student: models.Student = Depends(require_student),
     database: Session = Depends(get_database),
 ):
+    if student.face_image:
+        raise HTTPException(status_code=409, detail="Face enrollment is already completed and cannot be replaced")
     enroll_face_subject_with_engine(student.university_id, payload.face_image)
     student.face_image = payload.face_image
     database.commit()
@@ -767,6 +842,7 @@ def request_guardian(
             face_status="enrolled",
             identity_match=0,
         )
+        enroll_guardian_with_face_engine(guardian)
         database.add(guardian)
         database.flush()
     existing = database.query(models.GuardianStudentLink).filter(
