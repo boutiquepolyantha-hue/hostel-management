@@ -1386,6 +1386,14 @@ def admin_assistant(
     incomplete_tamam = [(record, student) for record, student in tamam_rows if record.status != "completed"]
     bus_trips = database.query(models.BusTrip).filter(models.BusTrip.building_id.in_(building_ids)).order_by(models.BusTrip.departure_at).limit(100).all()
 
+    action_terms = ("add ", "edit ", "disable ", "activate ", "reset ", "move ", "enroll ", "remove ", "approve ", "reject ", "change ", "generate ", "cancel ", "mark ", "correct ", "delete ", "create ")
+    if question.startswith(action_terms):
+        return {
+            "answer": "This request would change system data. For safety, confirm the exact record and action before it is executed.",
+            "items": [],
+            "requires_confirmation": True,
+        }
+
     if any(term in question for term in ("outside", "currently out", "not inside")):
         rows = [_assistant_item(s, status="outside") for s in outside]
         return {"answer": f"{len(rows)} student(s) are currently outside.", "items": rows}
