@@ -168,6 +168,13 @@ def enroll_guardian_with_face_engine(guardian: models.Guardian) -> None:
         # Render may need time to wake the face-engine service from sleep.
         with urllib.request.urlopen(request, timeout=45) as response:
             result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as reason:
+        try:
+            engine_detail = json.loads(reason.read().decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            engine_detail = {"detail": "Face engine rejected the enrollment request"}
+        detail = engine_detail.get("detail", "Face engine rejected the enrollment request") if isinstance(engine_detail, dict) else "Face engine rejected the enrollment request"
+        raise HTTPException(status_code=502, detail=f"Face enrollment error ({reason.code}): {detail}") from reason
     except (urllib.error.URLError, TimeoutError, ValueError) as reason:
         raise HTTPException(status_code=503, detail="The face-enrollment service is unavailable") from reason
     if result.get("enrolled") is not True:
@@ -194,6 +201,13 @@ def enroll_face_subject_with_engine(subject_code: str, face_image: str) -> None:
     try:
         with urllib.request.urlopen(request, timeout=45) as response:
             result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as reason:
+        try:
+            engine_detail = json.loads(reason.read().decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            engine_detail = {"detail": "Face engine rejected the enrollment request"}
+        detail = engine_detail.get("detail", "Face engine rejected the enrollment request") if isinstance(engine_detail, dict) else "Face engine rejected the enrollment request"
+        raise HTTPException(status_code=502, detail=f"Face enrollment error ({reason.code}): {detail}") from reason
     except (urllib.error.URLError, TimeoutError, ValueError) as reason:
         raise HTTPException(status_code=503, detail="The configured face-enrollment service is unavailable") from reason
     if result.get("enrolled") is not True:
