@@ -349,7 +349,11 @@ app.add_middleware(
         "http://localhost:5174",
         "http://127.0.0.1:5174",
         "https://hostel-management-web.onrender.com",
-        os.getenv("FRONTEND_URL", "").rstrip("/"),
+        *(
+            [os.getenv("FRONTEND_URL", "").rstrip("/")]
+            if os.getenv("FRONTEND_URL", "").strip()
+            else []
+        ),
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -524,9 +528,11 @@ def login(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="lax",
-        secure=False,
-max_age=8 * 60 * 60,    )
+        samesite="none",
+        secure=True,
+        path="/",
+        max_age=8 * 60 * 60,
+    )
     return {
         "authenticated": True,
         "id": supervisor.id,
@@ -1637,9 +1643,11 @@ def student_login(
         key=STUDENT_COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="lax",
+        samesite="none",
         secure=True,
-max_age=8 * 60 * 60,    )
+        path="/",
+        max_age=8 * 60 * 60,
+    )
     return {"authenticated": True, "student": student_profile(database, student)}
 
 

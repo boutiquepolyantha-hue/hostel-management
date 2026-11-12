@@ -1,6 +1,12 @@
-export const API_URL =
-  import.meta.env.VITE_API_URL ??
-(import.meta.env.DEV ? "http://localhost:8000" : "")
+// Keep the local development default, but never silently send production
+// requests to the static site. Render can still override this with
+// VITE_API_URL when the service URL changes.
+export const API_URL = (
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV
+    ? "http://localhost:8000"
+    : "https://hostel-management-8hst.onrender.com")
+).replace(/\/$/, "");
 
 
 
