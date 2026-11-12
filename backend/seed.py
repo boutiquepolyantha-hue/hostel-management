@@ -19,10 +19,58 @@ LAST_NAMES = [
     "Khalid", "Mahmoud", "Nasser", "Omar", "Rashid", "Saeed", "Saleh",
     "Yousef",
 ]
-CITIES = ["Abu Dhabi", "Dubai", "Sharjah", "Ajman", "Al Ain", "Fujairah", "Ras Al Khaimah", "Umm Al Quwain", "Khor Fakkan", "Kalba", "Dibba Al-Fujairah", "Madinat Zayed"]
-RELATIONSHIPS = ["Father", "Mother", "Brother", "Sister", "Uncle", "Aunt"]
-DESTINATIONS = ["Bani Yas", "Khor Fakkan", "Al Shahama"]
+DESTINATIONS = [
+    "Al Shahama",
+    "Khor Fakkan",
+    "Bani Yas",
+    "Al Ain",
+    "Dubai",
+    "Sharjah",
+    "Ajman",
+    "Fujairah",
+    "Ras Al Khaimah",
+    "Umm Al Quwain",
+    "Khalifa City",
+    "Mohammed Bin Zayed City",
+    "Mussafah",
+    "Al Rahba",
+    "Al Samha",
+    "Madinat Zayed",
+    "Ruwais",
+    "Ghayathi",
+    "Madinat Al Riyad",
+    "Dubai", 
+]
 
+
+CITIES = DESTINATIONS.copy()
+RELATIONSHIPS = ["Father", "Mother", "Brother", "Sister", "Uncle", "Aunt"]
+
+DEMO_CARD_UIDS = [
+    "23 01 3F 21",
+    "D2 F0 B7 03",
+    "95 AD D3 06",
+]
+
+DEMO_PASSENGER_INDEXES = [
+    29,
+    19,
+    0,
+]
+DEMO_FINGERPRINT_STUDENTS = {
+    (1, 1): ("Mariam Barashed", 1),
+    (1, 5): ("Mariam Nasser", 2),
+    (1, 7): ("Alya Alderei", 3),
+    (2, 1): ("Fatima Almansoori", 4),
+    (2, 5): ("Latifa Albedwawi", 5),
+}
+DEMO_STUDENT_PHONES = {
+    "Mariam Barashed": "0558262125",
+    "Mariam Nasser": "0506104044",
+    "Alya Alderei": "0503023343",
+    "Fatima Almansoori": "0522737383",
+    "Latifa Albedwawi": "0566558854",
+}
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE buildings (
@@ -44,6 +92,8 @@ CREATE TABLE audit_logs (
  occurred_at DATETIME NOT NULL, details TEXT NOT NULL);
 CREATE TABLE students (
  id INTEGER PRIMARY KEY, university_id VARCHAR(30) NOT NULL UNIQUE,
+ rfid_uid VARCHAR(50) UNIQUE,
+ fingerprint_id INTEGER UNIQUE,
  full_name VARCHAR(120) NOT NULL, email VARCHAR(160) NOT NULL UNIQUE,
  phone VARCHAR(30) NOT NULL, city VARCHAR(80) NOT NULL,
  building_id INTEGER NOT NULL REFERENCES buildings(id),
@@ -146,17 +196,20 @@ def seed() -> None:
             global_index = (building_id - 1) * 300 + local_index
             item_id = global_index + 1
             full_name = "Sara Ahmed" if global_index == 0 else unique_name(global_index)
+            fingerprint_id = None
+            demo_fingerprint_student = DEMO_FINGERPRINT_STUDENTS.get((building_id, local_index))
+            if demo_fingerprint_student is not None: full_name, fingerprint_id = demo_fingerprint_student
             email_name = full_name.lower().replace(" ", ".")
+            student_phone = DEMO_STUDENT_PHONES.get(full_name,f"050{1000000 + item_id:07d}",)
             floor = local_index // 60 + 1
             room = floor * 100 + (local_index % 60) // 2 + 1
-            student_status = "outside" if local_index % 10 == 0 else "inside"
-
+            student_status = "outside" if local_index % 2 == 0 else "inside"       
             cursor.execute(
-                "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    item_id, f"U2026{item_id:04d}", full_name,
+                    item_id, f"U2026{item_id:04d}", None, fingerprint_id, full_name,
                     f"{email_name}.{item_id}@student.hostel.local",
-                    f"050{1000000 + item_id:07d}",
+                    student_phone,
                     CITIES[global_index % len(CITIES)], building_id,
                     str(room), student_status, 1,
                 ),
@@ -165,10 +218,12 @@ def seed() -> None:
                 "INSERT INTO student_credentials VALUES (?, ?, ?)",
                 (item_id, item_id, demo_student_password),
             )
-            guardian_name = "Ahmed Hassan" if global_index == 0 else (
-                f"{FIRST_NAMES[(global_index + 7) % len(FIRST_NAMES)]} "
-                f"{LAST_NAMES[(global_index + 5) % len(LAST_NAMES)]}"
-            )
+            if global_index == 0:
+             guardian_name = "Ahmed Hassan"
+            else:
+              base_guardian_name = unique_name(global_index)
+
+              guardian_name = (f"{base_guardian_name} "f"{LAST_NAMES[(global_index + 7)% len(LAST_NAMES)]}")
             face_status = "failed" if local_index in {8, 151} else "verified"
             cursor.execute(
                 "INSERT INTO guardians VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -201,15 +256,15 @@ def seed() -> None:
                     None,
                 ),
             )
-            tamam_completed = local_index % 15 != 0
-            tamam_time = NOW.replace(
+            tamam_completed = local_index % 2 == 0
+            tamam_time = datetime.now().replace(
                 hour=21, minute=(local_index * 7) % 60,
                 second=0, microsecond=0,
             )
             cursor.execute(
                 "INSERT INTO tamam_records VALUES (?, ?, ?, ?, ?, ?)",
                 (
-                    item_id, item_id, (NOW - timedelta(days=local_index % 14)).date().isoformat(),
+                    item_id, item_id,datetime.now().date().isoformat(),
                     "completed" if tamam_completed else "not_completed",
                     "fingerprint" if tamam_completed else None,
                     iso(tamam_time) if tamam_completed else None,
@@ -228,41 +283,139 @@ def seed() -> None:
 
     # Ahmed Hassan (G-20001) is linked only to his daughter, Sara Ahmed (U20260001).
     # The guardian kiosk queries approved links, so it will display only Sara for him.
-
     trip_id = 0
     passenger_id = 0
+
     for building_id in (1, 2):
-        first_student_id = (building_id - 1) * 300 + 1
-        for trip_index, destination in enumerate(DESTINATIONS):
-            trip_id += 1
-            departure = (NOW - timedelta(days=(building_id + trip_index * 3) % 14)).replace(
-                hour=16 + trip_index,
-                minute=30 if trip_index == 0 else 0,
-                second=0, microsecond=0,
-            )
-            cursor.execute(
-                "INSERT INTO bus_trips VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    trip_id, building_id,
-                    f"Bus {building_id * 10 + trip_index + 1:02d}",
-                    destination, iso(departure), 30,
-                    "boarding" if trip_index == 0 else "scheduled",
-                ),
-            )
-            for index in range(28):
-                passenger_id += 1
-                student_id = first_student_id + trip_index * 28 + index
-                boarded = index < (22 if trip_index == 0 else 16)
+        inside_student_ids = [
+            row[0]
+            for row in cursor.execute(
+                """
+                SELECT id
+                FROM students
+                WHERE building_id = ?
+                  AND current_status = 'inside'
+                ORDER BY id
+                """,
+                (building_id,),
+            ).fetchall()
+        ]
+
+        # Keep the same three demo students and cards,
+        # but place them in the first three bus areas.
+        if building_id == 1:
+            for demo_index in range(3):
+                old_position = (
+                    demo_index * 30
+                    + DEMO_PASSENGER_INDEXES[
+                        demo_index
+                    ]
+                )
+
+                demo_student_id = (
+                    inside_student_ids[
+                        old_position
+                    ]
+                )
+
                 cursor.execute(
-                    "INSERT INTO bus_passengers VALUES (?, ?, ?, ?, ?, ?)",
+                    """
+                    UPDATE students
+                    SET rfid_uid = ?,
+                        city = ?
+                    WHERE id = ?
+                    """,
                     (
-                        passenger_id, trip_id, student_id,
-                        "boarded" if boarded else "not_boarded",
-                        "face_verification" if boarded else None,
-                        iso(departure - timedelta(minutes=30 - index))
-                        if boarded else None,
+                        DEMO_CARD_UIDS[demo_index],
+                        DESTINATIONS[demo_index],
+                        demo_student_id,
                     ),
                 )
+
+        trips_by_destination = {}
+
+        for trip_index, destination in enumerate(
+            DESTINATIONS
+        ):
+            trip_id += 1
+
+            departure = NOW.replace(
+                hour=16,
+                minute=30,
+                second=0,
+                microsecond=0,
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO bus_trips
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trip_id,
+                    building_id,
+                    (
+                        f"Bus "
+                        f"{(building_id - 1) * 20 + trip_index + 1:02d}"
+                    ),
+                    destination,
+                    iso(departure),
+                    30,
+                    (
+                        "boarding"
+                        if trip_index < 3
+                        else "scheduled"
+                    ),
+                ),
+            )
+
+            trips_by_destination[
+                destination
+            ] = (
+                trip_id,
+                departure,
+            )
+
+        students = cursor.execute(
+            """
+            SELECT id, city
+            FROM students
+            WHERE building_id = ?
+            ORDER BY id
+            """,
+            (building_id,),
+        ).fetchall()
+
+        for student_id, student_area in students:
+            assigned_trip = (
+                trips_by_destination.get(
+                    student_area
+                )
+            )
+
+            if assigned_trip is None:
+                continue
+
+            assigned_trip_id, departure = (
+                assigned_trip
+            )
+
+            passenger_id += 1
+
+            cursor.execute(
+                """
+                INSERT INTO bus_passengers
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    passenger_id,
+                    assigned_trip_id,
+                    student_id,
+                    "not_boarded",
+                    None,
+                    None,
+                ),
+            )
 
     database.commit()
     counts = {

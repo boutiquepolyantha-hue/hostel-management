@@ -5,6 +5,7 @@ import {
   Building2,
   Camera,
   CheckCircle2,
+  ClipboardCheck,
   ChevronRight,
   CircleUserRound,
   Clock3,
@@ -222,6 +223,17 @@ function StudentNavigation({ active }: { active: string }) {
       <button className={active === "id" ? "active" : ""} onClick={() => navigate("/student/id")}>
         <IdCard /> <span>Digital Student ID</span>
       </button>
+      <button
+  className={
+    active === "tamam" ? "active" : ""
+  }
+  onClick={() =>
+    navigate("/student/tamam")
+  }
+>
+  <ClipboardCheck />
+  <span>Tamam</span>
+    </button>
       <button className={active === "guardians" ? "active" : ""} onClick={() => navigate("/student/guardians")}>
         <UsersRound /> <span>Guardian</span>
       </button>
@@ -274,7 +286,6 @@ function StudentPage({
         <section className="student-workspace">
           <header className="student-topbar"><Bell /><div className="student-avatar">{initials(student.full_name)}</div><strong>{student.full_name}</strong><ChevronRight /></header>
           {children}
-          <ChatAssistant endpoint="/student/chat" title="Student help assistant" />
         </section>
       </div>
     </main>
@@ -596,6 +607,18 @@ function StudentProfilePage({
   const [faceSaving, setFaceSaving] = useState(false);
   const [faceMessage, setFaceMessage] = useState("");
   const [faceError, setFaceError] = useState("");
+  const [currentPassword, setCurrentPassword] =
+  useState("");
+const [newPassword, setNewPassword] =
+  useState("");
+const [confirmPassword, setConfirmPassword] =
+  useState("");
+const [passwordSaving, setPasswordSaving] =
+  useState(false);
+const [passwordMessage, setPasswordMessage] =
+  useState("");
+const [passwordError, setPasswordError] =
+  useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -636,7 +659,56 @@ function StudentProfilePage({
     } catch (reason) { setFaceError(reason instanceof Error ? reason.message : "Could not save face verification"); }
     finally { setFaceSaving(false); }
   }
+  async function changePassword(
+  event: FormEvent,
+) {
+  event.preventDefault();
 
+  setPasswordError("");
+  setPasswordMessage("");
+
+  if (newPassword !== confirmPassword) {
+    setPasswordError(
+      "The new passwords do not match.",
+    );
+    return;
+  }
+
+  if (newPassword.length < 8) {
+    setPasswordError(
+      "The new password must contain at least 8 characters.",
+    );
+    return;
+  }
+
+  setPasswordSaving(true);
+
+  try {
+    const result = await api<{
+      changed: boolean;
+      message: string;
+    }>("/student/profile/password", {
+      method: "PATCH",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    });
+
+    setPasswordMessage(result.message);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+  } catch (reason) {
+    setPasswordError(
+      reason instanceof Error
+        ? reason.message
+        : "Could not change password",
+    );
+  } finally {
+    setPasswordSaving(false);
+  }
+}
   return (
     <StudentPage student={student} active="profile">
       <div className="student-screen-content">
@@ -677,6 +749,86 @@ function StudentProfilePage({
               {faceError && <div className="student-error">{faceError}</div>}{faceMessage && <div className="student-success">{faceMessage}</div>}
             </div>
           </div>
+          <form
+  className="guardian-request-form"
+  onSubmit={changePassword}
+>
+  <h2>Change password</h2>
+
+  <p>
+    Enter your current password before choosing
+    a new permanent password.
+  </p>
+
+  <div className="guardian-form-grid">
+    <label>
+      Current password
+      <input
+        required
+        type="password"
+        autoComplete="current-password"
+        value={currentPassword}
+        onChange={(event) =>
+          setCurrentPassword(
+            event.target.value,
+          )
+        }
+      />
+    </label>
+
+    <label>
+      New password
+      <input
+        required
+        type="password"
+        minLength={8}
+        autoComplete="new-password"
+        value={newPassword}
+        onChange={(event) =>
+          setNewPassword(event.target.value)
+        }
+      />
+    </label>
+
+    <label>
+      Confirm new password
+      <input
+        required
+        type="password"
+        minLength={8}
+        autoComplete="new-password"
+        value={confirmPassword}
+        onChange={(event) =>
+          setConfirmPassword(
+            event.target.value,
+          )
+        }
+      />
+    </label>
+  </div>
+
+  {passwordError && (
+    <div className="student-error">
+      {passwordError}
+    </div>
+  )}
+
+  {passwordMessage && (
+    <div className="student-success">
+      {passwordMessage}
+    </div>
+  )}
+
+  <button
+    type="submit"
+    className="student-primary"
+    disabled={passwordSaving}
+  >
+    {passwordSaving
+      ? "Saving…"
+      : "Save password"}
+  </button>
+</form>
         </section>
         <button className="student-signout" onClick={onLogout}><LogOut /> Sign out</button>
       </div>
@@ -691,6 +843,16 @@ function GuardianManagementPage({ student }: { student: StudentProfileData }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+   const [guardianMode, setGuardianMode] =
+    useState<"new" | "existing">("new");
+
+  const [
+    existingGuardian,
+    setExistingGuardian,
+  ] = useState({
+    guardian_identifier: "",
+    relationship: "",
+  });
   const [form, setForm] = useState({ full_name: "", email: "", phone: "", relationship: "", emirates_id: "", city: "" });
   const [photo, setPhoto] = useState("");
   const [cameraActive, setCameraActive] = useState(false);
@@ -712,6 +874,51 @@ function GuardianManagementPage({ student }: { student: StudentProfileData }) {
       load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send request"); }
     finally { setSaving(false); }
+  }
+    async function submitExistingGuardian(
+    event: FormEvent,
+  ) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await api<{
+        message: string;
+        guardian: string;
+        relationship: string;
+        status: string;
+      }>(
+        "/student/guardians/link-existing",
+        {
+          method: "POST",
+          body: JSON.stringify(
+            existingGuardian,
+          ),
+        },
+      );
+
+      setMessage(
+        `Your request to link ${result.guardian} ` +
+          "was sent for supervisor approval.",
+      );
+
+      setExistingGuardian({
+        guardian_identifier: "",
+        relationship: "",
+      });
+
+      load();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not send link request",
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   useEffect(() => () => streamRef.current?.getTracks().forEach(track => track.stop()), []);
@@ -736,15 +943,342 @@ function GuardianManagementPage({ student }: { student: StudentProfileData }) {
       <h2>Your guardians</h2>
       {guardians.length ? <div className="guardian-list">{guardians.map(guardian => <div className="profile-guardian" key={guardian.id}><ShieldCheck /><div><strong>{guardian.full_name}</strong><p>{guardian.relationship} · <PhoneLink phone={guardian.phone} /><br />Face enrollment: {guardian.face_enrolled ? "captured" : "missing"}<br />Guardian code: <strong>{guardian.status === "approved" ? guardian.guardian_code : "Assigned after approval"}</strong></p></div><StatusPill text={guardian.status === "approved" ? "Approved" : guardian.status === "rejected" ? "Rejected" : "Pending approval"} /></div>)}</div> : <p>No guardians added yet.</p>}
     </section>
-    <section className="student-white-card guardian-request-form">
-      <h2><UserPlus /> Add new guardian</h2><p>Capture the guardian’s face now; it is enrolled for their later face-only kiosk sign-in.</p>
+   <section className="student-white-card guardian-request-form">
+  <div className="guardian-form-grid">
+    <button
+      type="button"
+      className={
+        guardianMode === "new"
+          ? "student-primary"
+          : "student-secondary"
+      }
+      onClick={() => {
+        setGuardianMode("new");
+        setError("");
+        setMessage("");
+      }}
+    >
+      Register new guardian
+    </button>
+
+    <button
+      type="button"
+      className={
+        guardianMode === "existing"
+          ? "student-primary"
+          : "student-secondary"
+      }
+      onClick={() => {
+        setGuardianMode("existing");
+        setError("");
+        setMessage("");
+      }}
+    >
+      Link existing guardian
+    </button>
+  </div>
+
+  {guardianMode === "new" ? (
+    <>
+      <h2>
+        <UserPlus /> Add new guardian
+      </h2>
+
+      <p>
+        Capture the guardian’s face now; it is
+        enrolled for their later face-only kiosk
+        sign-in.
+      </p>
+
       <form onSubmit={submit}>
-        <div className="guardian-form-grid"><label>Full name<input required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></label><label>Relationship<select required value={form.relationship} onChange={e => setForm({ ...form, relationship: e.target.value })}><option value="">Select relationship</option>{["Cousin", "Driver", "Housekeeper", "Mother", "Brother", "Sister", "Father", "Uncle", "Aunt"].map(x => <option key={x}>{x}</option>)}</select></label><label>Mobile number<input required value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label><label>Email address<input type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label><label>Emirates ID<input required value={form.emirates_id} onChange={e => setForm({ ...form, emirates_id: e.target.value })} /></label><label>UAE city<input required value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></label></div>
-        <div className="guardian-photo-capture">{photo ? <img src={photo} alt="Guardian face enrollment" /> : cameraActive ? <video ref={videoRef} autoPlay playsInline muted /> : <Camera />}<div><strong>Guardian face enrollment</strong><p>Take a clear front-facing photo for kiosk sign-in.</p>{!cameraActive && !photo && <button type="button" className="student-secondary" onClick={startCamera}><Camera /> Start camera</button>}{cameraActive && <button type="button" className="student-primary" onClick={capturePhoto}>Capture photo</button>}{photo && <button type="button" className="student-secondary" onClick={() => setPhoto("")}>Retake photo</button>}</div></div>
-        {error && <div className="student-error">{error}</div>}{message && <div className="student-success">{message}</div>}
-        <button className="student-primary" disabled={saving || !photo}>{saving ? "Sending…" : "Send for approval"}</button>
+        <div className="guardian-form-grid">
+          <label>
+            Full name
+            <input
+              required
+              value={form.full_name}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  full_name:
+                    event.target.value,
+                })
+              }
+            />
+          </label>
+
+          <label>
+            Relationship
+            <select
+              required
+              value={form.relationship}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  relationship:
+                    event.target.value,
+                })
+              }
+            >
+              <option value="">
+                Select relationship
+              </option>
+
+              {[
+                "Cousin",
+                "Driver",
+                "Housekeeper",
+                "Mother",
+                "Brother",
+                "Sister",
+                "Father",
+                "Uncle",
+                "Aunt",
+              ].map((relationship) => (
+                <option key={relationship}>
+                  {relationship}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Mobile number
+            <input
+              required
+              value={form.phone}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  phone: event.target.value,
+                })
+              }
+            />
+          </label>
+
+          <label>
+            Email address
+            <input
+              required
+              type="email"
+              value={form.email}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  email: event.target.value,
+                })
+              }
+            />
+          </label>
+
+          <label>
+            Emirates ID
+            <input
+              required
+              value={form.emirates_id}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  emirates_id:
+                    event.target.value,
+                })
+              }
+            />
+          </label>
+
+          <label>
+            UAE city
+            <input
+              required
+              value={form.city}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  city: event.target.value,
+                })
+              }
+            />
+          </label>
+        </div>
+
+        <div className="guardian-photo-capture">
+          {photo ? (
+            <img
+              src={photo}
+              alt="Guardian face enrollment"
+            />
+          ) : cameraActive ? (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+            />
+          ) : (
+            <Camera />
+          )}
+
+          <div>
+            <strong>
+              Guardian face enrollment
+            </strong>
+
+            <p>
+              Take a clear front-facing photo
+              for kiosk sign-in.
+            </p>
+
+            {!cameraActive && !photo && (
+              <button
+                type="button"
+                className="student-secondary"
+                onClick={startCamera}
+              >
+                <Camera /> Start camera
+              </button>
+            )}
+
+            {cameraActive && (
+              <button
+                type="button"
+                className="student-primary"
+                onClick={capturePhoto}
+              >
+                Capture photo
+              </button>
+            )}
+
+            {photo && (
+              <button
+                type="button"
+                className="student-secondary"
+                onClick={() => setPhoto("")}
+              >
+                Retake photo
+              </button>
+            )}
+          </div>
+        </div>
+
+        {error && (
+          <div className="student-error">
+            {error}
+          </div>
+        )}
+
+        {message && (
+          <div className="student-success">
+            {message}
+          </div>
+        )}
+
+        <button
+          className="student-primary"
+          disabled={saving || !photo}
+        >
+          {saving
+            ? "Sending…"
+            : "Send for approval"}
+        </button>
       </form>
-    </section></div>
+    </>
+  ) : (
+    <>
+      <h2>
+        <UserPlus /> Link existing guardian
+      </h2>
+
+      <p>
+        Link a guardian who already has an
+        account and face enrollment. Supervisor
+        approval is still required.
+      </p>
+
+      <form
+        onSubmit={submitExistingGuardian}
+      >
+        <div className="guardian-form-grid">
+          <label>
+            Guardian email or Emirates ID
+            <input
+              required
+              value={
+                existingGuardian
+                  .guardian_identifier
+              }
+              onChange={(event) =>
+                setExistingGuardian({
+                  ...existingGuardian,
+                  guardian_identifier:
+                    event.target.value,
+                })
+              }
+            />
+          </label>
+
+          <label>
+            Relationship
+            <select
+              required
+              value={
+                existingGuardian.relationship
+              }
+              onChange={(event) =>
+                setExistingGuardian({
+                  ...existingGuardian,
+                  relationship:
+                    event.target.value,
+                })
+              }
+            >
+              <option value="">
+                Select relationship
+              </option>
+
+              {[
+                "Cousin",
+                "Driver",
+                "Housekeeper",
+                "Mother",
+                "Brother",
+                "Sister",
+                "Father",
+                "Uncle",
+                "Aunt",
+              ].map((relationship) => (
+                <option key={relationship}>
+                  {relationship}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {error && (
+          <div className="student-error">
+            {error}
+          </div>
+        )}
+
+        {message && (
+          <div className="student-success">
+            {message}
+          </div>
+        )}
+
+        <button
+          className="student-primary"
+          disabled={saving}
+        >
+          {saving
+            ? "Sending…"
+            : "Send link request"}
+        </button>
+      </form>
+    </>
+  )}
+</section>
+   </div>
   </div></StudentPage>;
 }
 
@@ -760,7 +1294,417 @@ function ProfileSection({ title, rows }: { title: string; rows: Array<[string, R
   );
 }
 
+function StudentTamamPage({
+  student,
+}: {
+  student: StudentProfileData;
+}) {
+  const [checkingLocation, setCheckingLocation] =
+    useState(false);
 
+  const [cameraActive, setCameraActive] =
+    useState(false);
+
+  const [photo, setPhoto] = useState("");
+  const [submitting, setSubmitting] =
+    useState(false);
+
+  const [completed, setCompleted] =
+    useState(false);
+
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const videoRef =
+    useRef<HTMLVideoElement>(null);
+
+  const streamRef =
+    useRef<MediaStream | null>(null);
+
+  function stopCamera() {
+    streamRef.current
+      ?.getTracks()
+      .forEach((track) => track.stop());
+
+    streamRef.current = null;
+    setCameraActive(false);
+  }
+
+  useEffect(() => {
+    return () => stopCamera();
+  }, []);
+
+  function getCurrentPosition() {
+    return new Promise<GeolocationPosition>(
+      (resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(
+            new Error(
+              "Location is unavailable on this device.",
+            ),
+          );
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          reject,
+          {
+            enableHighAccuracy: true,
+            timeout: 20000,
+            maximumAge: 0,
+          },
+        );
+      },
+    );
+  }
+
+  async function beginTamam() {
+    setError("");
+    setMessage("");
+    setPhoto("");
+    setCheckingLocation(true);
+
+    if (!student.face_enrolled) {
+      setError(
+        "Enroll your face in your profile first.",
+      );
+      setCheckingLocation(false);
+      return;
+    }
+
+    try {
+      const position =
+        await getCurrentPosition();
+
+      if (position.coords.accuracy > 500) {
+        throw new Error(
+          "Location accuracy is too low. Please enable precise location and retry.",
+        );
+      }
+
+      const locationResult = await api<{
+        inside: boolean;
+        building_id: number;
+        message: string;
+      }>("/student/tamam/location-check", {
+        method: "POST",
+        body: JSON.stringify({
+          latitude:
+            position.coords.latitude,
+          longitude:
+            position.coords.longitude,
+          accuracy_m:
+            position.coords.accuracy,
+        }),
+      });
+
+      if (!locationResult.inside) {
+        throw new Error(
+          "You are not inside your assigned hostel building.",
+        );
+      }
+
+      setMessage(locationResult.message);
+
+      if (
+        !navigator.mediaDevices?.getUserMedia
+      ) {
+        throw new Error(
+          "Camera access requires HTTPS or localhost.",
+        );
+      }
+
+      const stream =
+        await navigator.mediaDevices
+          .getUserMedia({
+            video: {
+              facingMode: "user",
+            },
+            audio: false,
+          });
+
+      streamRef.current = stream;
+      setCameraActive(true);
+
+      requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject =
+            stream;
+
+          void videoRef.current.play();
+        }
+      });
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not verify your location.",
+      );
+    } finally {
+      setCheckingLocation(false);
+    }
+  }
+
+  function captureFace() {
+    const video = videoRef.current;
+
+    if (!video) {
+      setError(
+        "The camera is not ready. Please retry.",
+      );
+      return;
+    }
+
+    const canvas =
+      document.createElement("canvas");
+
+    canvas.width =
+      video.videoWidth || 640;
+
+    canvas.height =
+      video.videoHeight || 480;
+
+    const context =
+      canvas.getContext("2d");
+
+    if (!context) {
+      setError(
+        "Could not capture the face image.",
+      );
+      return;
+    }
+
+    context.drawImage(
+      video,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+
+    setPhoto(
+      canvas.toDataURL(
+        "image/jpeg",
+        0.8,
+      ),
+    );
+
+    stopCamera();
+    setError("");
+  }
+
+  async function submitTamam() {
+    if (!photo) {
+      setError(
+        "Capture your face before submitting.",
+      );
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+
+    try {
+      // Read location again when submitting.
+      const position =
+        await getCurrentPosition();
+
+      if (position.coords.accuracy > 500) {
+        throw new Error(
+          "Location accuracy is too low. Please retry.",
+        );
+      }
+
+      const result = await api<{
+        success: boolean;
+        status: string;
+        message: string;
+        completed_at: string;
+      }>("/student/tamam/check-in", {
+        method: "POST",
+        body: JSON.stringify({
+          face_image: photo,
+          latitude:
+            position.coords.latitude,
+          longitude:
+            position.coords.longitude,
+          accuracy_m:
+            position.coords.accuracy,
+        }),
+      });
+
+      setCompleted(result.success);
+      setMessage(result.message);
+      setPhoto("");
+      stopCamera();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not record Tamam.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <StudentPage
+      student={student}
+      active="tamam"
+    >
+      <div className="student-screen-content">
+        <header className="student-page-heading">
+          <h1>Tamam</h1>
+          <p>
+            Verify your location and face to
+            complete your daily Tamam.
+          </p>
+        </header>
+
+        <section className="student-white-card">
+          <h2>Daily Tamam</h2>
+
+          <p>
+            The camera will open only after
+            confirming that you are inside your
+            assigned hostel building.
+          </p>
+
+          {checkingLocation && (
+            <div className="verification-note">
+              <Clock3 />
+              <div>
+                <strong>
+                  Checking your location...
+                </strong>
+                <p>
+                  Please wait while we verify
+                  your assigned building.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {message && (
+            <div className="student-success">
+              {message}
+            </div>
+          )}
+
+          {error && (
+            <div className="student-error">
+              {error}
+            </div>
+          )}
+
+          {!completed && (
+            <div className="guardian-photo-capture">
+              {photo ? (
+                <img
+                  src={photo}
+                  alt="Tamam face capture"
+                />
+              ) : cameraActive ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                />
+              ) : (
+                <ClipboardCheck />
+              )}
+
+              <div>
+                <strong>
+                  Face Verification
+                </strong>
+
+                <p>
+                  Complete your daily Tamam
+                  using location and face
+                  verification.
+                </p>
+
+                {!cameraActive &&
+                  !photo && (
+                    <button
+                      type="button"
+                      className="student-primary"
+                      disabled={
+                        checkingLocation ||
+                        !student.face_enrolled
+                      }
+                      onClick={beginTamam}
+                    >
+                      <Camera />
+                      {checkingLocation
+                        ? "Checking location..."
+                        : "Face Verification"}
+                    </button>
+                  )}
+
+                {cameraActive && (
+                  <button
+                    type="button"
+                    className="student-primary"
+                    onClick={captureFace}
+                  >
+                    <Camera />
+                    Capture Face
+                  </button>
+                )}
+
+                {photo && (
+                  <>
+                    <button
+                      type="button"
+                      className="student-secondary"
+                      disabled={submitting}
+                      onClick={beginTamam}
+                    >
+                      Retake
+                    </button>
+
+                    <button
+                      type="button"
+                      className="student-primary"
+                      disabled={submitting}
+                      onClick={submitTamam}
+                    >
+                      <CheckCircle2 />
+                      {submitting
+                        ? "Recording..."
+                        : "Complete Tamam"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {completed && (
+            <div className="verification-note">
+              <CheckCircle2 />
+              <div>
+                <strong>
+                  Tamam completed
+                </strong>
+                <p>
+                  Your daily attendance has
+                  been recorded successfully.
+                </p>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    </StudentPage>
+  );
+}
 function StatusPill({ text }: { text: string }) {
   return <span className="student-status-pill"><CheckCircle2 /> {text}</span>;
 }
@@ -793,6 +1737,19 @@ export function StudentApp() {
       <Route path="access" element={student ? <DormAccessPage student={student} /> : <Navigate to="/student/login" replace />} />
       <Route path="verify/:requestId" element={student ? <FaceAndQrPage student={student} /> : <Navigate to="/student/login" replace />} />
       <Route path="id" element={student ? <StudentIdPage student={student} /> : <Navigate to="/student/login" replace />} />
+      <Route
+  path="tamam"
+  element={
+    student ? (
+      <StudentTamamPage student={student} />
+    ) : (
+      <Navigate
+        to="/student/login"
+        replace
+      />
+    )
+  }
+/>
       <Route path="profile" element={student ? <StudentProfilePage student={student} onLogout={logout} /> : <Navigate to="/student/login" replace />} />
       <Route path="guardians" element={student ? <GuardianManagementPage student={student} /> : <Navigate to="/student/login" replace />} />
       <Route path="*" element={<Navigate to={student ? "/student/home" : "/student/login"} replace />} />

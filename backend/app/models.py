@@ -69,6 +69,8 @@ class Student(Base):
     current_status: Mapped[str] = mapped_column(String(20), default="inside")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     face_image: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rfid_uid: Mapped[str | None] = mapped_column(String(50),unique=True,index=True,nullable=True,)
+    fingerprint_id: Mapped[int | None] = mapped_column(Integer,unique=True,index=True,nullable=True,)
 
 
 class StudentCredential(Base):
@@ -82,7 +84,41 @@ class StudentCredential(Base):
     )
     password_hash: Mapped[str] = mapped_column(String(255))
 
+class StudentPasswordResetCode(Base):
+    __tablename__ = (
+        "student_password_reset_codes"
+    )
 
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id"),
+        index=True,
+    )
+
+    code_hash: Mapped[str] = mapped_column(
+        String(64),
+        index=True,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime,
+    )
+
+    used_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+    )
 class StudentSession(Base):
     __tablename__ = "student_sessions"
 

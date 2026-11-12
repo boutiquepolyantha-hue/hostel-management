@@ -25,12 +25,20 @@ from app.schemas import (
     AdminGuardianCreate,
     AdminGuardianUpdate,
     AdminStudentCreate,
+    AdminStudentUpdate,
     AssistantQuestion,
     GuardianAssistantQuestion,
     KioskScanRequest,
     LoginRequest,
     RelationshipReview,
     StudentLoginRequest,
+    StudentPasswordChange,
+    AdminExistingGuardianLink,
+    StudentExistingGuardianLink,
+    StudentPasswordResetRequest,
+    StudentPasswordResetConfirm,
+    TamamLocationRequest,
+    TamamCheckInRequest,
 )
 from app.security import (
     COOKIE_NAME,
@@ -140,7 +148,122 @@ def bootstrap_supervisor_from_environment() -> None:
 
 
 bootstrap_supervisor_from_environment()
+TAMAM_MAX_ACCURACY_M = 500
 
+
+def _tamam_building_polygon(
+    building_id: int,
+) -> list[tuple[float, float]]:
+    variable_name = (
+        f"TAMAM_BUILDING_{building_id}_POLYGON"
+    )
+
+    raw = os.getenv(
+        variable_name,
+        "",
+    ).strip()
+
+    if not raw:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Tamam location boundary for your "
+                "building is not configured."
+            ),
+        )
+
+    try:
+        vertices = json.loads(raw)
+
+        if not isinstance(vertices, list):
+            raise ValueError
+
+        if len(vertices) < 3:
+            raise ValueError
+
+        polygon: list[tuple[float, float]] = []
+
+        for vertex in vertices:
+            if (
+                not isinstance(vertex, list)
+                or len(vertex) != 2
+            ):
+                raise ValueError
+
+            latitude = float(vertex[0])
+            longitude = float(vertex[1])
+
+            if not (
+                -90 <= latitude <= 90
+                and -180 <= longitude <= 180
+            ):
+                raise ValueError
+
+            polygon.append(
+                (latitude, longitude)
+            )
+
+        return polygon
+
+    except (
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Tamam location boundary "
+                "configuration is invalid."
+            ),
+        ) from error
+
+
+def _inside_tamam_polygon(
+    latitude: float,
+    longitude: float,
+    polygon: list[tuple[float, float]],
+) -> bool:
+    inside = False
+
+    for index in range(len(polygon)):
+        first_latitude, first_longitude = (
+            polygon[index]
+        )
+
+        second_latitude, second_longitude = (
+            polygon[
+                (index + 1) % len(polygon)
+            ]
+        )
+
+        crosses_latitude = (
+            first_latitude > latitude
+        ) != (
+            second_latitude > latitude
+        )
+
+        if crosses_latitude:
+            crossing_longitude = (
+                (
+                    second_longitude
+                    - first_longitude
+                )
+                * (
+                    latitude
+                    - first_latitude
+                )
+                / (
+                    second_latitude
+                    - first_latitude
+                )
+                + first_longitude
+            )
+
+            if longitude < crossing_longitude:
+                inside = not inside
+
+    return inside
 
 def enroll_guardian_with_face_engine(guardian: models.Guardian) -> None:
     """Enroll a guardian captured by the website before approving access."""
@@ -269,6 +392,8 @@ def student_dict(student: models.Student) -> dict:
         "building_id": student.building_id,
         "room_number": student.room_number,
         "current_status": student.current_status,
+        "is_active": student.is_active,
+        "face_enrolled": bool(student.face_image),
     }
 
 
@@ -400,7 +525,7 @@ def login(
         value=token,
         httponly=True,
         samesite="lax",
-        secure=True,
+        secure=False,
 max_age=8 * 60 * 60,    )
     return {
         "authenticated": True,
@@ -522,7 +647,40 @@ def seed_hosted_demo_data(
             models.GuardianStudentLink.supervisor_note == "Generated demonstration record"
         ).count(),
     }
+@app.get(
+    "/buildings/{building_id}/rooms/{room_number}/availability"
+)
+def check_room_availability(
+    building_id: int,
+    room_number: str,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    building_or_404(database, building_id)
+    assert_assignment(database, supervisor, building_id)
 
+    requested_room = room_number.strip()
+
+    occupied_student = (
+        database.query(models.Student)
+        .filter(
+            models.Student.building_id == building_id,
+            func.lower(models.Student.room_number)
+            == requested_room.lower(),
+            models.Student.is_active.is_(True),
+        )
+        .first()
+    )
+
+    return {
+        "available": occupied_student is None,
+        "room_number": requested_room,
+        "occupant": (
+            occupied_student.full_name
+            if occupied_student
+            else None
+        ),
+    }
 
 @app.post("/admin/students", status_code=201)
 def create_admin_student(
@@ -540,6 +698,28 @@ def create_admin_student(
         )
     ).first():
         raise HTTPException(status_code=409, detail="Student email or university ID already exists")
+    requested_room = payload.room_number.strip()
+
+    occupied_student = (
+        database.query(models.Student)
+        .filter(
+            models.Student.building_id
+            == payload.building_id,
+            func.lower(models.Student.room_number)
+            == requested_room.lower(),
+            models.Student.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if occupied_student is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Room {requested_room} is already "
+                f"occupied by {occupied_student.full_name}"
+            ),
+        )
     student = models.Student(
         university_id=payload.university_id.strip(),
         full_name=payload.full_name.strip(),
@@ -547,15 +727,55 @@ def create_admin_student(
         phone=payload.phone.strip(),
         city=payload.city.strip(),
         building_id=payload.building_id,
-        room_number=payload.room_number.strip(),
-        current_status="inside",
+        room_number=requested_room,
+        current_status=payload.current_status,
         is_active=payload.is_active,
         face_image=payload.face_image,
     )
+    face_enrollment_status = "not_enrolled"
+
     if payload.face_image:
-        enroll_face_subject_with_engine(student.university_id, payload.face_image)
+     try:
+        enroll_face_subject_with_engine(
+            student.university_id,
+            payload.face_image,
+        )
+        face_enrollment_status = "verified"
+     except HTTPException as exception:
+        if exception.detail != "FACE_ENGINE_URL is not configured":
+            raise
+
+        face_enrollment_status = "enrollment_pending"
     database.add(student)
     database.flush()
+    database.add(
+        models.TamamRecord(
+            student_id=student.id,
+            record_date=date.today().isoformat(),
+            status="not_completed",
+            verification_method=None,
+            completed_at=None,
+        )
+    )
+
+    database.add(
+        models.EntryExitRecord(
+            student_id=student.id,
+            guardian_id=None,
+            action=(
+                "check_in"
+                if payload.current_status == "inside"
+                else "check_out"
+            ),
+            qr_status="admin_created",
+            face_status=(
+                "verified"
+                if payload.face_image
+                else "not_enrolled"
+            ),
+            occurred_at=datetime.utcnow(),
+        )
+    )
     database.add(models.StudentCredential(
         student_id=student.id,
         password_hash=hash_password(payload.password),
@@ -563,31 +783,455 @@ def create_admin_student(
     database.commit()
     database.refresh(student)
     return {"student": {**student_dict(student), "is_active": student.is_active}}
+@app.patch("/admin/students/{student_id}")
+def update_admin_student(
+    student_id: int,
+    payload: AdminStudentUpdate,
+    supervisor: models.Supervisor = Depends(
+        require_supervisor
+    ),
+    database: Session = Depends(get_database),
+):
+    student = database.get(
+        models.Student,
+        student_id,
+    )
 
+    if student is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Student not found",
+        )
 
+    assert_assignment(
+        database,
+        supervisor,
+        student.building_id,
+    )
+
+    building_or_404(
+        database,
+        payload.building_id,
+    )
+
+    assert_assignment(
+        database,
+        supervisor,
+        payload.building_id,
+    )
+
+    duplicate_student = (
+        database.query(models.Student)
+        .filter(
+            models.Student.id != student_id,
+            or_(
+                func.lower(models.Student.email)
+                == payload.email.strip().lower(),
+                func.lower(models.Student.university_id)
+                == payload.university_id.strip().lower(),
+            ),
+        )
+        .first()
+    )
+
+    if duplicate_student:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Student email or university ID "
+                "already exists"
+            ),
+        )
+        requested_rfid_uid = None
+
+    if payload.rfid_uid and payload.rfid_uid.strip():
+        requested_rfid_uid = " ".join(
+            payload.rfid_uid.strip()
+            .upper()
+            .replace(":", " ")
+            .split()
+        )
+
+        duplicate_rfid = (
+            database.query(models.Student)
+            .filter(
+                models.Student.id != student_id,
+                models.Student.rfid_uid == requested_rfid_uid,
+            )
+            .first()
+        )
+
+        if duplicate_rfid:
+            raise HTTPException(
+                status_code=409,
+                detail="RFID card is already assigned to another student",
+            )
+    requested_room = payload.room_number.strip()
+
+    occupied_room = (
+        database.query(models.Student)
+        .filter(
+            models.Student.id != student_id,
+            models.Student.building_id
+            == payload.building_id,
+            func.lower(models.Student.room_number)
+            == requested_room.lower(),
+            models.Student.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if occupied_room:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Room {requested_room} is already "
+                f"occupied by {occupied_room.full_name}"
+            ),
+        )
+
+    previous_status = student.current_status
+
+    student.full_name = payload.full_name.strip()
+    student.university_id = (
+        payload.university_id.strip()
+    )
+    student.email = payload.email.strip().lower()
+    student.phone = payload.phone.strip()
+    student.city = payload.city.strip()
+    student.building_id = payload.building_id
+    student.room_number = requested_room
+    student.current_status = payload.current_status
+    student.is_active = payload.is_active
+    if requested_rfid_uid:
+        student.rfid_uid = requested_rfid_uid
+    if payload.password:
+        credential = (
+            database.query(models.StudentCredential)
+            .filter(
+                models.StudentCredential.student_id
+                == student.id
+            )
+            .first()
+        )
+
+        if credential is None:
+            credential = models.StudentCredential(
+                student_id=student.id,
+                password_hash=hash_password(
+                    payload.password
+                ),
+            )
+            database.add(credential)
+        else:
+            credential.password_hash = hash_password(
+                payload.password
+            )
+
+    if previous_status != payload.current_status:
+        database.add(
+            models.EntryExitRecord(
+                student_id=student.id,
+                guardian_id=None,
+                action=(
+                    "check_in"
+                    if payload.current_status == "inside"
+                    else "check_out"
+                ),
+                qr_status="admin_updated",
+                face_status="not_required",
+                occurred_at=datetime.utcnow(),
+            )
+        )
+    target_trip = (
+        database.query(models.BusTrip)
+        .filter(
+            models.BusTrip.building_id == 1,
+            func.lower(models.BusTrip.destination)
+            == student.city.lower(),
+        )
+        .order_by(models.BusTrip.id)
+        .first()
+    )
+
+    if target_trip is None:
+         raise HTTPException(
+            status_code=422,
+            detail=(
+                "No bus is available for the "
+                "selected City / Area"
+            ),
+        )
+
+    passenger = (
+        database.query(models.BusPassenger)
+        .filter(
+            models.BusPassenger.student_id
+            == student.id
+        )
+        .first()
+    )
+
+    if passenger is None:
+        database.add(
+            models.BusPassenger(
+                trip_id=target_trip.id,
+                student_id=student.id,
+                status="not_boarded",
+                verification_method=None,
+                boarded_at=None,
+            )
+        )
+
+    elif passenger.trip_id != target_trip.id:
+        passenger.trip_id = target_trip.id
+        passenger.status = "not_boarded"
+        passenger.verification_method = None
+        passenger.boarded_at = None
+    database.commit()
+    database.refresh(student)
+
+    return {
+        "updated": True,
+        "student": {
+            **student_dict(student),
+            "is_active": student.is_active,
+        },
+    }
+@app.delete("/admin/students/{student_id}")
+def delete_admin_student(
+    student_id: int,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    student = database.get(
+        models.Student,
+        student_id,
+    )
+
+    if student is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Student not found",
+        )
+
+    assert_assignment(
+        database,
+        supervisor,
+        student.building_id,
+    )
+
+    database.query(
+        models.BusPassenger
+    ).filter(
+        models.BusPassenger.student_id == student_id
+    ).delete(synchronize_session=False)
+
+    database.query(
+        models.TamamRecord
+    ).filter(
+        models.TamamRecord.student_id == student_id
+    ).delete(synchronize_session=False)
+
+    database.query(
+        models.EntryExitRecord
+    ).filter(
+        models.EntryExitRecord.student_id == student_id
+    ).delete(synchronize_session=False)
+
+    database.query(
+        models.DormAccessRequest
+    ).filter(
+        models.DormAccessRequest.student_id == student_id
+    ).delete(synchronize_session=False)
+
+    database.query(
+        models.GuardianStudentLink
+    ).filter(
+        models.GuardianStudentLink.student_id == student_id
+    ).delete(synchronize_session=False)
+
+    database.query(
+        models.StudentCredential
+    ).filter(
+        models.StudentCredential.student_id == student_id
+    ).delete(synchronize_session=False)
+
+    database.delete(student)
+    database.commit()
+
+    return {
+        "deleted": True,
+        "student_id": student_id,
+    }
+@app.post(
+    "/student/guardians/link-existing",
+    status_code=201,
+)
+def link_existing_guardian_by_student(
+    payload: StudentExistingGuardianLink,
+    student: models.Student = Depends(
+        require_student
+    ),
+    database: Session = Depends(get_database),
+):
+    identifier = (
+        payload.guardian_identifier.strip()
+    )
+
+    guardian = (
+        database.query(models.Guardian)
+        .filter(
+            or_(
+                func.lower(models.Guardian.email)
+                == identifier.lower(),
+                models.Guardian.emirates_id
+                == identifier,
+            ),
+            models.Guardian.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if guardian is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Active guardian with this email "
+                "or Emirates ID was not found"
+            ),
+        )
+
+    existing_link = (
+        database.query(
+            models.GuardianStudentLink
+        )
+        .filter(
+            models.GuardianStudentLink.guardian_id
+            == guardian.id,
+            models.GuardianStudentLink.student_id
+            == student.id,
+        )
+        .first()
+    )
+
+    if existing_link is not None:
+        if existing_link.status == "approved":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This guardian is already "
+                    "approved for your account"
+                ),
+            )
+
+        if existing_link.status == "pending":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A request for this guardian "
+                    "is already pending"
+                ),
+            )
+
+        existing_link.relationship = (
+            payload.relationship.strip()
+        )
+        existing_link.status = "pending"
+        existing_link.can_check_in = False
+        existing_link.can_check_out = False
+        existing_link.requested_at = (
+            datetime.utcnow()
+        )
+        existing_link.reviewed_at = None
+        existing_link.supervisor_note = None
+
+        link = existing_link
+
+    else:
+        link = models.GuardianStudentLink(
+            guardian_id=guardian.id,
+            student_id=student.id,
+            relationship=(
+                payload.relationship.strip()
+            ),
+            status="pending",
+            can_check_in=False,
+            can_check_out=False,
+            requested_at=datetime.utcnow(),
+            reviewed_at=None,
+            supervisor_note=None,
+        )
+
+        database.add(link)
+
+    database.commit()
+
+    return {
+        "success": True,
+        "message": (
+            "Guardian link request sent "
+            "for supervisor approval"
+        ),
+        "guardian": guardian.full_name,
+        "student": student.full_name,
+        "relationship": link.relationship,
+        "status": "pending",
+    }
 @app.post("/admin/guardians", status_code=201)
 def create_admin_guardian(
     payload: AdminGuardianCreate,
     supervisor: models.Supervisor = Depends(require_supervisor),
     database: Session = Depends(get_database),
 ):
-    """Create a guardian account; relationship approval is a separate step."""
+    """Create a guardian and link them to an active student."""
     del supervisor
-    student = database.query(models.Student).filter(
-        func.lower(models.Student.university_id) == payload.student_university_id.strip().lower(),
-        models.Student.is_active.is_(True),
-    ).first()
-    if student is None:
-        raise HTTPException(status_code=404, detail="Active student with this university ID was not found")
-    if database.query(models.Guardian).filter(
-        or_(
-            func.lower(models.Guardian.email) == payload.email.lower(),
-            models.Guardian.emirates_id == payload.emirates_id.strip(),
+
+    student = (
+        database.query(models.Student)
+        .filter(
+            func.lower(models.Student.university_id)
+            == payload.student_university_id.strip().lower(),
+            models.Student.is_active.is_(True),
         )
-    ).first():
-        raise HTTPException(status_code=409, detail="Guardian email or Emirates ID already exists")
+        .first()
+    )
+
+    if student is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Active student with this university ID "
+                "was not found"
+            ),
+        )
+
+    existing_guardian = (
+        database.query(models.Guardian)
+        .filter(
+            or_(
+                func.lower(models.Guardian.email)
+                == payload.email.lower(),
+                models.Guardian.emirates_id
+                == payload.emirates_id.strip(),
+            )
+        )
+        .first()
+    )
+
+    if existing_guardian:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Guardian email or Emirates ID "
+                "already exists"
+            ),
+        )
+
     guardian = models.Guardian(
-        guardian_code=f"PENDING-{secrets.token_hex(5).upper()}",
+        guardian_code=(
+            f"PENDING-{secrets.token_hex(5).upper()}"
+        ),
         full_name=payload.full_name.strip(),
         emirates_id=payload.emirates_id.strip(),
         email=payload.email.strip().lower(),
@@ -597,26 +1241,59 @@ def create_admin_guardian(
         password_hash=hash_password(payload.password),
         is_active=payload.is_active,
         face_image=payload.face_image,
-        face_status="verified" if payload.face_image else "not_enrolled",
-        identity_match=95 if payload.face_image else 0,
+        face_status="not_enrolled",
+        identity_match=0,
     )
+
+    face_verified = False
+
     if payload.face_image:
-        enroll_guardian_with_face_engine(guardian)
+        try:
+            enroll_guardian_with_face_engine(guardian)
+            guardian.face_status = "verified"
+            guardian.identity_match = 95
+            face_verified = True
+        except HTTPException as exception:
+            if (
+                exception.detail
+                != "FACE_ENGINE_URL is not configured"
+            ):
+                raise
+
+            guardian.face_status = "enrollment_pending"
+
     database.add(guardian)
     database.flush()
-    database.add(models.GuardianStudentLink(
-        guardian_id=guardian.id,
-        student_id=student.id,
-        relationship=payload.relationship.strip(),
-        status="approved" if payload.face_image else "pending",
-        can_check_in=bool(payload.face_image),
-        can_check_out=bool(payload.face_image),
-        requested_at=datetime.utcnow(),
-        reviewed_at=datetime.utcnow() if payload.face_image else None,
-        supervisor_note="Automatically approved during admin creation" if payload.face_image else None,
-    ))
+
+    relationship_status = (
+        "approved" if face_verified else "pending"
+    )
+
+    database.add(
+        models.GuardianStudentLink(
+            guardian_id=guardian.id,
+            student_id=student.id,
+            relationship=payload.relationship.strip(),
+            status=relationship_status,
+            can_check_in=face_verified,
+            can_check_out=face_verified,
+            requested_at=datetime.utcnow(),
+            reviewed_at=(
+                datetime.utcnow()
+                if face_verified
+                else None
+            ),
+            supervisor_note=(
+                "Automatically approved during admin creation"
+                if face_verified
+                else "Face enrollment pending"
+            ),
+        )
+    )
+
     database.commit()
     database.refresh(guardian)
+
     return {
         "guardian": {
             "id": guardian.id,
@@ -628,12 +1305,217 @@ def create_admin_guardian(
             "relationship": guardian.relationship,
             "is_active": guardian.is_active,
             "face_status": guardian.face_status,
-            "student_university_id": student.university_id,
-            "relationship_status": "pending",
+            "student_university_id": (
+                student.university_id
+            ),
+            "relationship_status": relationship_status,
         }
     }
 
+@app.patch("/admin/guardians/{guardian_id}/face")
+def update_admin_guardian_face(
+    guardian_id: int,
+    payload: FaceEnrollmentRequest,
+    supervisor: models.Supervisor = Depends(
+        require_supervisor
+    ),
+    database: Session = Depends(get_database),
+):
+    guardian = database.get(
+        models.Guardian,
+        guardian_id,
+    )
 
+    if guardian is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Guardian not found",
+        )
+
+    linked_buildings = (
+        database.query(models.Student.building_id)
+        .join(
+            models.GuardianStudentLink,
+            models.GuardianStudentLink.student_id
+            == models.Student.id,
+        )
+        .filter(
+            models.GuardianStudentLink.guardian_id
+            == guardian_id
+        )
+        .distinct()
+        .all()
+    )
+
+    has_permission = any(
+        database.query(models.SupervisorBuilding)
+        .filter(
+            models.SupervisorBuilding.supervisor_id
+            == supervisor.id,
+            models.SupervisorBuilding.building_id
+            == building_id,
+        )
+        .first()
+        for (building_id,) in linked_buildings
+    )
+
+    if not has_permission:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You are not assigned to this "
+                "guardian's building"
+            ),
+        )
+
+    guardian.face_image = payload.face_image
+
+    enroll_guardian_with_face_engine(guardian)
+
+    guardian.face_status = "verified"
+    guardian.identity_match = 0
+
+    database.commit()
+
+    return {
+        "updated": True,
+        "guardian_id": guardian.id,
+        "face_status": guardian.face_status,
+    }
+@app.post(
+    "/admin/guardians/link-existing",
+    status_code=201,
+)
+def link_existing_guardian_by_admin(
+    payload: AdminExistingGuardianLink,
+    supervisor: models.Supervisor = Depends(
+        require_supervisor
+    ),
+    database: Session = Depends(get_database),
+):
+    identifier = (
+        payload.guardian_identifier.strip()
+    )
+
+    guardian = (
+        database.query(models.Guardian)
+        .filter(
+            or_(
+                func.lower(models.Guardian.email)
+                == identifier.lower(),
+                models.Guardian.emirates_id
+                == identifier,
+            ),
+            models.Guardian.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if guardian is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Active guardian with this email "
+                "or Emirates ID was not found"
+            ),
+        )
+
+    student = (
+        database.query(models.Student)
+        .filter(
+            func.lower(
+                models.Student.university_id
+            )
+            == payload.student_university_id
+            .strip()
+            .lower(),
+            models.Student.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if student is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Active student with this "
+                "university ID was not found"
+            ),
+        )
+
+    assert_assignment(
+        database,
+        supervisor,
+        student.building_id,
+    )
+
+    existing_link = (
+        database.query(
+            models.GuardianStudentLink
+        )
+        .filter(
+            models.GuardianStudentLink.guardian_id
+            == guardian.id,
+            models.GuardianStudentLink.student_id
+            == student.id,
+        )
+        .first()
+    )
+
+    if existing_link is not None:
+        if existing_link.status == "approved":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This guardian is already linked "
+                    "to this student"
+                ),
+            )
+
+        existing_link.relationship = (
+            payload.relationship.strip()
+        )
+        existing_link.status = "approved"
+        existing_link.can_check_in = True
+        existing_link.can_check_out = True
+        existing_link.reviewed_at = datetime.utcnow()
+        existing_link.supervisor_note = (
+            "Approved by administration"
+        )
+
+        link = existing_link
+
+    else:
+        link = models.GuardianStudentLink(
+            guardian_id=guardian.id,
+            student_id=student.id,
+            relationship=(
+                payload.relationship.strip()
+            ),
+            status="approved",
+            can_check_in=True,
+            can_check_out=True,
+            requested_at=datetime.utcnow(),
+            reviewed_at=datetime.utcnow(),
+            supervisor_note=(
+                "Linked by administration"
+            ),
+        )
+
+        database.add(link)
+
+    database.commit()
+
+    return {
+        "success": True,
+        "message": (
+            "Existing guardian linked "
+            "successfully"
+        ),
+        "guardian": guardian.full_name,
+        "student": student.full_name,
+        "relationship": link.relationship,
+    }
 @app.delete("/admin/guardians/{guardian_id}")
 def delete_admin_guardian(
     guardian_id: int,
@@ -768,15 +1650,62 @@ def student_me(
 ):
     return {"authenticated": True, "student": student_profile(database, student)}
 
+@app.patch("/student/profile/password")
+def change_student_password(
+    payload: StudentPasswordChange,
+    student: models.Student = Depends(require_student),
+    database: Session = Depends(get_database),
+):
+    credential = (
+        database.query(models.StudentCredential)
+        .filter(
+            models.StudentCredential.student_id
+            == student.id
+        )
+        .first()
+    )
 
+    if credential is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Student credentials were not found",
+        )
+
+    if not verify_password(
+        payload.current_password,
+        credential.password_hash,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Current password is incorrect",
+        )
+
+    if verify_password(
+        payload.new_password,
+        credential.password_hash,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="New password must be different from the current password",
+        )
+
+    credential.password_hash = hash_password(
+        payload.new_password
+    )
+
+    database.commit()
+
+    return {
+        "changed": True,
+        "message": "Password changed successfully",
+    }
 @app.patch("/student/profile/face")
 def enroll_student_face(
     payload: FaceEnrollmentRequest,
     student: models.Student = Depends(require_student),
     database: Session = Depends(get_database),
 ):
-    if student.face_image:
-        raise HTTPException(status_code=409, detail="Face enrollment is already completed and cannot be replaced")
+   
     enroll_face_subject_with_engine(student.university_id, payload.face_image)
     student.face_image = payload.face_image
     database.commit()
@@ -1433,9 +2362,35 @@ def admin_assistant(
 ):
     """Grounded answers for common supervisor questions."""
     question = payload.question.lower().strip()
-    building_ids = [row.building_id for row in database.query(models.SupervisorBuilding).filter(
-        models.SupervisorBuilding.supervisor_id == supervisor.id
-    ).all()]
+    assigned_building_ids = [
+        row.building_id
+        for row in database.query(
+            models.SupervisorBuilding
+        )
+        .filter(
+            models.SupervisorBuilding.supervisor_id
+            == supervisor.id
+        )
+        .all()
+    ]
+
+    if payload.building_id is not None:
+        if (
+            payload.building_id
+            not in assigned_building_ids
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "You are not assigned to "
+                    "this building"
+                ),
+            )
+
+        building_ids = [payload.building_id]
+
+    else:
+        building_ids = assigned_building_ids
     outside = database.query(models.Student).filter(
         models.Student.building_id.in_(building_ids), models.Student.current_status == "outside"
     ).order_by(models.Student.full_name).all()
@@ -1487,7 +2442,203 @@ def admin_assistant(
     ).all()
     incomplete_tamam = [(record, student) for record, student in tamam_rows if record.status != "completed"]
     bus_trips = database.query(models.BusTrip).filter(models.BusTrip.building_id.in_(building_ids)).order_by(models.BusTrip.departure_at).limit(100).all()
+    guidance_answers = {
+        "show a student’s complete profile": (
+            "Open the student records, search using the student’s "
+            "name or university ID, then select the matching student "
+            "to review her building, room, contact details, residence "
+            "status, Tamam status, and access history."
+        ),
+        "add a student": (
+            "Open Add Users from the administration menu. This page "
+            "allows the administrator to add either a Student or a "
+            "Guardian. Select the Student tab, enter the required "
+            "student information, then select Create Student."
+        ),
+        "edit a student": (
+            "Open User Management. Search for the student using her name or university ID, open her record, select Edit, update the required information, then save the changes. If the student moves to another residence, update her building instead of deleting her record. Use Remove only when the student has graduated or her account must be permanently deleted."
+        ),
+        "move a student to another room": (
+            "Open the student’s record, select Edit, enter the new "
+            "room number, verify that the room belongs to the assigned "
+            "building, then save the changes."
+        ),
+        "move a student to another building": (
+            "Open the student’s record, select Edit, choose the new "
+            "building and room, verify the administrator’s permission, "
+            "then save the changes."
+        ),
+        "remove a student face enrollment": (
+            "Open the student’s record, go to Face Enrollment, select "
+            "Remove Enrollment, then confirm the action. The student "
+            "must enroll again before using face verification."
+        ),
+    }
 
+    for command, guidance in guidance_answers.items():
+        if command in question:
+            return {
+                "answer": guidance,
+                "items": [],
+            }
+        if (
+        "guardian" in question
+        and "complete profile" in question
+    ):
+            return {
+            "answer": (
+                "Open Guardian Relationship Approvals. "
+                "Select All or Approved, then search "
+                "for the guardian’s full name. Select "
+                "the guardian’s record to view their "
+                "personal information, relationship, "
+                "linked student, approval status, "
+                "face-enrollment status, and "
+                "identity-match result."
+            ),
+            "items": [],
+        }
+
+    if "add a guardian" in question:
+        return {
+            "answer": (
+                "Open Add Users and select Guardian. "
+                "Choose Register New Guardian, enter "
+                "the student’s university ID and the "
+                "guardian’s information, capture the "
+                "guardian’s face, then select Create "
+                "Guardian. If the guardian already has "
+                "an account, choose Link Existing "
+                "Guardian instead. Enter the guardian’s "
+                "email or Emirates ID, the student’s "
+                "university ID, and the relationship, "
+                "then select Link Guardian."
+            ),
+            "items": [],
+        }
+
+    if "edit a guardian" in question:
+        return {
+            "answer": (
+                "Open Guardian Relationship Approvals "
+                "and select All or Approved. Search "
+                "for the guardian’s full name, then "
+                "open the guardian’s record. Select "
+                "Edit Guardian Details, update the "
+                "required information, and select "
+                "Save Changes."
+            ),
+            "items": [],
+        }
+
+    if (
+        "guardian face" in question
+        and (
+            "enroll" in question
+            or "update" in question
+        )
+    ):
+        return {
+            "answer": (
+                "Open Guardian Relationship Approvals "
+                "and select All or Approved. Search "
+                "for the guardian’s full name, open "
+                "the guardian’s record, then select "
+                "Retake Guardian Face. Capture a clear "
+                "front-facing image and save the new "
+                "enrollment."
+            ),
+            "items": [],
+        }
+        if "export the tamam report" in question:
+          report_rows = (
+            database.query(
+                models.TamamRecord,
+                models.Student,
+            )
+            .join(
+                models.Student,
+                models.TamamRecord.student_id
+                == models.Student.id,
+            )
+            .filter(
+                models.Student.building_id.in_(
+                    building_ids
+                ),
+                models.Student.is_active.is_(True),
+                models.Student.current_status
+                == "inside",
+                models.TamamRecord.record_date
+                == date.today().isoformat(),
+            )
+            .order_by(
+                models.Student.building_id,
+                models.Student.full_name,
+            )
+            .all()
+        )
+
+        completed_count = sum(
+            1
+            for record, _student
+            in report_rows
+            if record.status == "completed"
+        )
+
+        items = [
+            {
+                "student": student.full_name,
+                "university_id": (
+                    student.university_id
+                ),
+                "building": (
+                    f"B{student.building_id}"
+                ),
+                "tamam_status": record.status,
+                "verification_method": (
+                    record.verification_method
+                    or "—"
+                ),
+                "completion_time": (
+                    record.completed_at.isoformat()
+                    if record.completed_at
+                    else "—"
+                ),
+            }
+            for record, student in report_rows
+        ]
+
+        return {
+            "answer": (
+                f"Today’s Tamam report includes "
+                f"{len(items)} student(s) currently "
+                f"inside the residence: "
+                f"{completed_count} completed and "
+                f"{len(items) - completed_count} "
+                f"not completed."
+            ),
+            "items": items,
+        }
+    if (
+        "change a student to another bus"
+        in question ):return {
+            "answer": (
+                "Open User Management and search "
+                "for the student using her name or "
+                "university ID. Select Edit, then "
+                "change City / Area to the destination "
+                "of the required bus and save the "
+                "changes. The student will be removed "
+                "from her previous bus and assigned "
+                "automatically to the new bus as "
+                "Not Boarded. If her residence status "
+                "is Outside, she will remain assigned "
+                "to the bus but will appear in its "
+                "passenger list only after she checks "
+                "in to the residence."
+            ),
+            "items": [],
+        }
     action_terms = ("add ", "edit ", "disable ", "activate ", "reset ", "move ", "enroll ", "remove ", "approve ", "reject ", "change ", "generate ", "cancel ", "mark ", "correct ", "delete ", "create ")
     if question.startswith(action_terms):
         return {
@@ -1527,19 +2678,168 @@ def admin_assistant(
         rows = [_assistant_item(s, status=r.status) for r, s in (incomplete_tamam if "incomplete" in question or "missed" in question else tamam_rows)]
         return {"answer": f"Today’s Tamam completion is {percent}% ({completed}/{len(tamam_rows)}).", "items": rows}
     if "bus" in question:
-        return {"answer": f"{len(bus_trips)} bus trip(s) are listed.", "items": [{"bus": b.bus_number, "destination": b.destination, "status": b.status, "departure": b.departure_at.isoformat()} for b in bus_trips]}
+         rows = []
+
+         for trip in bus_trips:
+            expected = (
+                database.query(models.BusPassenger)
+                .join(
+                    models.Student,
+                    models.BusPassenger.student_id
+                    == models.Student.id,
+                )
+                .filter(
+                    models.BusPassenger.trip_id
+                    == trip.id,
+                    models.Student.is_active.is_(True),
+                    models.Student.current_status
+                    == "inside",
+                )
+                .count()
+            )
+
+            boarded = (
+                database.query(models.BusPassenger)
+                .join(
+                    models.Student,
+                    models.BusPassenger.student_id
+                    == models.Student.id,
+                )
+                .filter(
+                    models.BusPassenger.trip_id
+                    == trip.id,
+                    models.BusPassenger.status
+                    == "boarded",
+                    models.Student.is_active.is_(True),
+                    models.Student.current_status
+                    == "inside",
+                )
+                .count()
+            )
+
+            bus_status = (
+                "Departed"
+                if expected > 0
+                and boarded == expected
+                else "Boarding"
+            )
+
+            rows.append(
+                {
+                    "bus": trip.bus_number,
+                    "destination": trip.destination,
+                    "status": bus_status,
+                    "departure":
+                        trip.departure_at.isoformat(),
+                }
+            )
+         return {
+            "answer": (
+                f"{len(rows)} bus trip(s) "
+                "are listed."
+            ),
+            "items": rows,
+        }
     if "check-in" in question or "check in" in question or "check-out" in question or "check out" in question:
         action = "check_in" if "check-in" in question or "check in" in question else "check_out"
         rows = [_assistant_item(s, occurred_at=r.occurred_at.isoformat(), action=action) for r, s in today_records if r.action == action]
         return {"answer": f"{len(rows)} {action.replace('_', '-')} record(s) today.", "items": rows}
     if "all students" in question or "building" in question or "registered" in question:
         return {"answer": f"{len(all_students)} student(s) are assigned to your buildings.", "items": [_assistant_item(s, building_id=str(s.building_id), room=s.room_number, status=s.current_status) for s in all_students]}
-    if "recent" in question or "activity" in question:
-        rows = [_assistant_item(s, action=r.action, occurred_at=r.occurred_at.isoformat()) for r, s in today_records[:100]]
-        return {"answer": f"Showing {len(rows)} recent access record(s).", "items": rows}
-    if any(term in question for term in ("pending", "approval", "guardian")):
-        rows = [{"guardian": guardian.full_name, "student": student.full_name, "relationship": link.relationship} for link, guardian, student in pending]
-        return {"answer": f"{len(rows)} guardian approval(s) are pending.", "items": rows}
+        if "recent" in question or "activity" in question:
+         rows = [
+            _assistant_item(
+                student,
+                action=record.action,
+                occurred_at=record.occurred_at.isoformat(),
+            )
+            for record, student in today_records[:100]
+        ]
+
+        return {
+            "answer": (
+                f"Showing {len(rows)} "
+                "recent access record(s)."
+            ),
+            "items": rows,
+        }
+
+    if "show all guardians" in question:
+        grouped_students = {}
+
+        for link, guardian, student in approved:
+            if student.id not in grouped_students:
+                grouped_students[student.id] = {
+                    "student": student.full_name,
+                    "university_id":
+                        student.university_id,
+                    "authorized_guardians": 0,
+                    "guardian_names": [],
+                }
+
+            grouped_students[
+                student.id
+            ]["authorized_guardians"] += 1
+
+            grouped_students[
+                student.id
+            ]["guardian_names"].append(
+                f"{guardian.full_name} "
+                f"({link.relationship})"
+            )
+
+        rows = []
+
+        for item in grouped_students.values():
+            rows.append(
+                {
+                    "student": item["student"],
+                    "university_id":
+                        item["university_id"],
+                    "authorized_guardians":
+                        item["authorized_guardians"],
+                    "guardian_names": " | ".join(
+                        item["guardian_names"]
+                    ),
+                }
+            )
+
+        rows.sort(
+            key=lambda item: item["student"]
+        )
+
+        return {
+            "answer": (
+                f"{len(rows)} student(s) have "
+                "approved authorized guardians."
+            ),
+            "items": rows,
+        }
+
+    if any(
+        term in question
+        for term in (
+            "pending",
+            "approval",
+            "guardian",
+        )
+    ):
+        rows = [
+            {
+                "guardian": guardian.full_name,
+                "student": student.full_name,
+                "relationship": link.relationship,
+            }
+            for link, guardian, student in pending
+        ]
+
+        return {
+            "answer": (
+                f"{len(rows)} guardian "
+                "approval(s) are pending."
+            ),
+            "items": rows,
+        }
     return {"answer": "Ask about students currently outside, today’s late check-outs, or pending guardian approvals.", "items": []}
 
 
@@ -1618,6 +2918,7 @@ def students(
             or_(
                 models.Student.full_name.ilike(term),
                 models.Student.university_id.ilike(term),
+                models.Student.email.ilike(term),
                 models.Student.room_number.ilike(term),
             )
         )
@@ -1713,8 +3014,6 @@ def entry_exit(
         },
         "items": items,
     }
-
-
 @app.get("/buildings/{building_id}/tamam")
 def tamam(
     building_id: int,
@@ -1722,68 +3021,290 @@ def tamam(
     search: str = "",
     record_date: str = "",
     city: str = "",
-    supervisor: models.Supervisor = Depends(require_supervisor),
+    supervisor: models.Supervisor = Depends(
+        require_supervisor
+    ),
     database: Session = Depends(get_database),
 ):
-    assert_assignment(database, supervisor, building_id)
-    today = record_date or date.today().isoformat()
-    query = (
-        database.query(models.TamamRecord, models.Student)
-        .join(models.Student)
+    assert_assignment(
+        database,
+        supervisor,
+        building_id,
+    )
+
+    selected_date = (
+        record_date
+        or date.today().isoformat()
+    )
+
+    try:
+        requested_date = date.fromisoformat(
+            selected_date
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid date",
+        ) from error
+
+    current_date = date.today()
+
+    # Future dates must remain empty.
+    if requested_date > current_date:
+        return {
+            "summary": {
+                "total": 0,
+                "completed": 0,
+                "not_completed": 0,
+                "outside_with_permit": 0,
+                "completion_percent": 0,
+            },
+            "items": [],
+        }
+
+    eligible_students_query = (
+        database.query(models.Student)
         .filter(
-            models.Student.building_id == building_id,
-            models.TamamRecord.record_date == today,
+            models.Student.building_id
+            == building_id,
+            models.Student.is_active.is_(True),
         )
     )
-    if status != "all":
-        query = query.filter(models.TamamRecord.status == status)
-    if city:
-        query = query.filter(models.Student.city == city)
-    if search.strip():
-        term = f"%{search.strip()}%"
-        query = query.filter(
-            or_(
-                models.Student.full_name.ilike(term),
-                models.Student.university_id.ilike(term),
+
+    # Today's Tamam includes only students who
+    # are currently inside the residence.
+    if requested_date == current_date:
+        eligible_students_query = (
+            eligible_students_query.filter(
+                models.Student.current_status
+                == "inside"
             )
         )
-    rows = query.order_by(models.Student.full_name).all()
-    all_count = database.query(models.TamamRecord).join(models.Student).filter(
-        models.Student.building_id == building_id,
-        models.TamamRecord.record_date == today,
+
+    eligible_students = (
+        eligible_students_query
+        .order_by(models.Student.id)
+        .all()
+    )
+
+    eligible_student_ids = [
+        student.id
+        for student in eligible_students
+    ]
+
+    existing_records = []
+
+    if eligible_student_ids:
+        existing_records = (
+            database.query(models.TamamRecord)
+            .filter(
+                models.TamamRecord.student_id.in_(
+                    eligible_student_ids
+                ),
+                models.TamamRecord.record_date
+                == selected_date,
+            )
+            .all()
+        )
+
+    existing_student_ids = {
+        record.student_id
+        for record in existing_records
+    }
+
+    past_completion_time = datetime.combine(
+        requested_date,
+        datetime.min.time(),
+    ).replace(hour=21)
+
+    # Past demo dates appear as completed.
+    if requested_date < current_date:
+        for record in existing_records:
+            record.status = "completed"
+
+            if not record.verification_method:
+                record.verification_method = (
+                    "fingerprint"
+                )
+
+            if record.completed_at is None:
+                record.completed_at = (
+                    past_completion_time
+                )
+
+    # Create any missing records.
+    for student in eligible_students:
+        if student.id in existing_student_ids:
+            continue
+
+        is_past_date = (
+            requested_date < current_date
+        )
+
+        database.add(
+            models.TamamRecord(
+                student_id=student.id,
+                record_date=selected_date,
+                status=(
+                    "completed"
+                    if is_past_date
+                    else "not_completed"
+                ),
+                verification_method=(
+                    "fingerprint"
+                    if is_past_date
+                    else None
+                ),
+                completed_at=(
+                    past_completion_time
+                    if is_past_date
+                    else None
+                ),
+            )
+        )
+
+    database.commit()
+
+    query = (
+        database.query(
+            models.TamamRecord,
+            models.Student,
+        )
+        .join(
+            models.Student,
+            models.TamamRecord.student_id
+            == models.Student.id,
+        )
+        .filter(
+            models.Student.building_id
+            == building_id,
+            models.Student.is_active.is_(True),
+            models.TamamRecord.record_date
+            == selected_date,
+        )
+    )
+
+    # Hide outside students from today's Tamam.
+    if requested_date == current_date:
+        query = query.filter(
+            models.Student.current_status
+            == "inside"
+        )
+
+    if status != "all":
+        query = query.filter(
+            models.TamamRecord.status == status
+        )
+
+    if city:
+        query = query.filter(
+            models.Student.city == city
+        )
+
+    if search.strip():
+        term = f"%{search.strip()}%"
+
+        query = query.filter(
+            or_(
+                models.Student.full_name.ilike(
+                    term
+                ),
+                models.Student.university_id.ilike(
+                    term
+                ),
+            )
+        )
+
+    rows = (
+        query.order_by(
+            models.Student.fingerprint_id.is_(
+                None
+            ),
+            models.Student.fingerprint_id,
+            models.Student.full_name,
+        )
+        .all()
+    )
+
+    summary_query = (
+        database.query(models.TamamRecord)
+        .join(
+            models.Student,
+            models.TamamRecord.student_id
+            == models.Student.id,
+        )
+        .filter(
+            models.Student.building_id
+            == building_id,
+            models.Student.is_active.is_(True),
+            models.TamamRecord.record_date
+            == selected_date,
+        )
+    )
+
+    if requested_date == current_date:
+        summary_query = summary_query.filter(
+            models.Student.current_status
+            == "inside"
+        )
+
+    all_count = summary_query.count()
+
+    completed = summary_query.filter(
+        models.TamamRecord.status
+        == "completed"
     ).count()
-    completed = database.query(models.TamamRecord).join(models.Student).filter(
-        models.Student.building_id == building_id,
-        models.TamamRecord.record_date == today,
-        models.TamamRecord.status == "completed",
-    ).count()
-    outside = database.query(models.Student).filter(
-        models.Student.building_id == building_id,
-        models.Student.current_status == "outside",
-    ).count()
+
+    outside = (
+        database.query(models.Student)
+        .filter(
+            models.Student.building_id
+            == building_id,
+            models.Student.is_active.is_(True),
+            models.Student.current_status
+            == "outside",
+        )
+        .count()
+    )
+
     items = [
         {
             **student_dict(student),
+            "record_id": record.id,
             "tamam_status": record.status,
-            "verification_method": record.verification_method,
+            "verification_method": (
+                record.verification_method
+            ),
             "completed_at": (
-                record.completed_at.isoformat() if record.completed_at else None
+                record.completed_at.isoformat()
+                if record.completed_at
+                else None
             ),
         }
         for record, student in rows
     ]
+
     return {
         "summary": {
             "total": all_count,
             "completed": completed,
-            "not_completed": all_count - completed,
+            "not_completed": (
+                all_count - completed
+            ),
             "outside_with_permit": outside,
-            "completion_percent": round(completed * 100 / all_count, 1)
-            if all_count
-            else 0,
+            "completion_percent": (
+                round(
+                    completed
+                    * 100
+                    / all_count,
+                    1,
+                )
+                if all_count
+                else 0
+            ),
         },
         "items": items,
-    }
+    } 
 
 
 @app.get("/buildings/{building_id}/bus-trips")
@@ -1794,19 +3315,56 @@ def bus_trips(
     database: Session = Depends(get_database),
 ):
     assert_assignment(database, supervisor, building_id)
-    query = database.query(models.BusTrip).filter(models.BusTrip.building_id == building_id)
+    query = database.query(models.BusTrip).filter( 
+    models.BusTrip.building_id == 1)
     if record_date:
         query = query.filter(func.date(models.BusTrip.departure_at) == record_date)
-    trips = query.order_by(models.BusTrip.departure_at).all()
+    trips = query.order_by(models.BusTrip.id).all()    
     result = []
     for trip in trips:
-        expected = database.query(models.BusPassenger).filter(
-            models.BusPassenger.trip_id == trip.id
-        ).count()
-        boarded = database.query(models.BusPassenger).filter(
-            models.BusPassenger.trip_id == trip.id,
-            models.BusPassenger.status == "boarded",
-        ).count()
+        expected = (
+            database.query(
+                models.BusPassenger
+            )
+            .join(
+                models.Student,
+                models.BusPassenger.student_id
+                == models.Student.id,
+            )
+            .filter(
+                models.BusPassenger.trip_id
+                == trip.id,
+                models.Student.current_status
+                == "inside",
+                models.Student.is_active.is_(
+                    True
+                ),
+            )
+            .count()
+        )
+            
+        boarded = (
+            database.query(
+                models.BusPassenger
+            )
+            .join(
+                models.Student,
+                models.BusPassenger.student_id
+                == models.Student.id,
+            )
+            .filter(
+                models.BusPassenger.trip_id
+                == trip.id,
+                models.BusPassenger.status
+                == "boarded",
+                models.Student.current_status
+                == "inside",
+                models.Student.is_active.is_(
+                    True
+                ),
+            )
+            .count()
+        )
         result.append(
             {
                 "id": trip.id,
@@ -1836,9 +3394,24 @@ def bus_passengers(
         raise HTTPException(status_code=404, detail="Trip not found")
     assert_assignment(database, supervisor, trip.building_id)
     query = (
-        database.query(models.BusPassenger, models.Student)
-        .join(models.Student)
-        .filter(models.BusPassenger.trip_id == trip_id)
+        database.query(
+            models.BusPassenger,
+            models.Student,
+        )
+        .join(
+            models.Student,
+            models.BusPassenger.student_id
+            == models.Student.id,
+        )
+        .filter(
+            models.BusPassenger.trip_id
+            == trip_id,
+            models.Student.current_status
+            == "inside",
+            models.Student.is_active.is_(
+                True
+            ),
+        )
     )
     if record_date:
         query = query.filter(func.date(models.BusPassenger.boarded_at) == record_date)
@@ -1857,12 +3430,280 @@ def bus_passengers(
             "verification_method": "card_verification" if passenger.verification_method else None,
             "boarded_at": (
                 passenger.boarded_at.isoformat() if passenger.boarded_at else None
-            ),
+            ),   
         }
         for passenger, student in rows
     ]
+@app.post("/buildings/{building_id}/tamam-demo-reset")
+def tamam_demo_reset(
+    building_id: int,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    assert_assignment(database, supervisor, building_id)
+
+    today = datetime.now().date().isoformat()
+
+    demo_students = (
+        database.query(models.Student)
+        .filter(
+            models.Student.building_id == building_id,
+            models.Student.fingerprint_id.isnot(None),
+        )
+        .all()
+    )
+
+    reset_students = []
+
+    for student in demo_students:
+        tamam_record = (
+            database.query(models.TamamRecord)
+            .filter(
+                models.TamamRecord.student_id == student.id,
+                func.date(models.TamamRecord.record_date) == today,
+            )
+            .first()
+        )
+
+        if tamam_record is not None:
+            tamam_record.status = "not_completed"
+            tamam_record.verification_method = None
+            tamam_record.completed_at = None
+            reset_students.append(student.full_name)
+
+    database.commit()
+
+    return {
+        "success": True,
+        "reset_count": len(reset_students),
+        "students": reset_students,
+    }
+@app.post("/fingerprint-scan")
+def fingerprint_scan(
+    payload: dict,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    try:
+        fingerprint_id = int(payload.get("fingerprint_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Valid fingerprint ID is required",
+        )
+
+    student = (
+        database.query(models.Student)
+        .filter(models.Student.fingerprint_id == fingerprint_id)
+        .first()
+    )
+
+    if student is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Fingerprint is not registered",
+        )
+
+    assert_assignment(database, supervisor, student.building_id)
+
+    if student.current_status != "inside":
+        return {
+            "success": False,
+            "message": "Student is outside the residence",
+            "student": student.full_name,
+        }
+
+    today = datetime.now().date().isoformat()
+
+    tamam_record = (
+        database.query(models.TamamRecord)
+        .filter(
+            models.TamamRecord.student_id == student.id,
+            func.date(models.TamamRecord.record_date) == today,
+        )
+        .first()
+    )
+
+    if tamam_record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Today's Tamam record was not found",
+        )
+
+    if tamam_record.status == "completed":
+        return {
+            "success": False,
+            "message": "Tamam already completed",
+            "student": student.full_name,
+            "building_id": student.building_id,
+        }
+
+    tamam_record.status = "completed"
+    tamam_record.verification_method = "fingerprint"
+    tamam_record.completed_at = datetime.utcnow()
+
+    database.commit()
+
+    return {
+        "success": True,
+        "message": "Tamam completed successfully",
+        "student": student.full_name,
+        "building_id": student.building_id,
+        "status": "completed",
+        "method": "fingerprint",
+        "completed_at": tamam_record.completed_at.isoformat(),
+    }
 
 
+@app.post("/rfid-scan")
+def rfid_scan(
+    payload: dict,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    uid = " ".join(
+        str(payload.get("uid", ""))
+        .strip()
+        .upper()
+        .replace(":", " ")
+        .split()
+    )
+
+    if not uid:
+        raise HTTPException(
+            status_code=400,
+            detail="RFID UID is required",
+        )
+
+    student = (
+        database.query(models.Student)
+        .filter(models.Student.rfid_uid == uid)
+        .first()
+    )
+
+    if student is None:
+        raise HTTPException(
+            status_code=404,
+            detail="RFID card is not registered",
+        )
+
+    assert_assignment(database, supervisor, student.building_id)
+
+    if student.current_status != "inside":
+        return {
+            "success": False,
+            "message": "Student is outside the residence",
+            "student": student.full_name,
+        }
+
+    passenger = (
+        database.query(models.BusPassenger)
+        .join(
+            models.BusTrip,
+            models.BusPassenger.trip_id == models.BusTrip.id,
+        )
+        .filter(models.BusPassenger.student_id == student.id)
+        .order_by(models.BusTrip.id)
+        .first()
+    )
+
+    if passenger is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Student is not assigned to a bus",
+        )
+
+    trip = database.get(models.BusTrip, passenger.trip_id)
+
+    if passenger.status == "boarded":
+        return {
+            "success": False,
+            "message": "Student already boarded",
+            "student": student.full_name,
+            "trip_id": trip.id,
+            "destination": trip.destination,
+        }
+
+    passenger.status = "boarded"
+    passenger.verification_method = "card_verification"
+    passenger.boarded_at = datetime.utcnow()
+    database.commit()
+
+    counts_query = (
+        database.query(models.BusPassenger)
+        .join(
+            models.Student,
+            models.BusPassenger.student_id == models.Student.id,
+        )
+        .filter(
+            models.BusPassenger.trip_id == trip.id,
+            models.Student.is_active.is_(True),
+            models.Student.current_status == "inside",
+        )
+    )
+
+    boarded = counts_query.filter(
+        models.BusPassenger.status == "boarded"
+    ).count()
+
+    expected = counts_query.count()
+
+    return {
+        "success": True,
+        "message": "Student boarded successfully",
+        "student": student.full_name,
+        "trip_id": trip.id,
+        "destination": trip.destination,
+        "boarded": boarded,
+        "expected": expected,
+    }
+@app.post("/buildings/{building_id}/bus-demo-reset")
+def bus_demo_reset(
+    building_id: int,
+    supervisor: models.Supervisor = Depends(require_supervisor),
+    database: Session = Depends(get_database),
+):
+    assert_assignment(database, supervisor, building_id)
+
+    demo_students = (
+        database.query(models.Student)
+        .filter(
+            models.Student.building_id == building_id,
+            models.Student.rfid_uid.isnot(None),
+        )
+        .all()
+    )
+
+    reset_students = []
+
+    for student in demo_students:
+        passenger = (
+            database.query(models.BusPassenger)
+            .join(
+                models.BusTrip,
+                models.BusPassenger.trip_id == models.BusTrip.id,
+            )
+            .filter(
+                models.BusPassenger.student_id == student.id,
+                models.BusTrip.building_id == 1,
+            )
+            .order_by(models.BusTrip.id)
+            .first()
+        )
+
+        if passenger is not None:
+            passenger.status = "not_boarded"
+            passenger.verification_method = None
+            passenger.boarded_at = None
+            reset_students.append(student.full_name)
+
+    database.commit()
+
+    return {
+        "success": True,
+        "reset_count": len(reset_students),
+        "students": reset_students,
+    }
 @app.get("/buildings/{building_id}/guardian-links")
 def guardian_links(
     building_id: int,
@@ -1978,7 +3819,250 @@ def review_guardian_link(
 # consistently on every device and supports refreshing any React route.
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
+@app.post("/student/tamam/location-check")
+def tamam_location_check(
+    payload: TamamLocationRequest,
+    student: models.Student = Depends(
+        require_student,
+    ),
+):
+    if payload.accuracy_m > TAMAM_MAX_ACCURACY_M:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Location accuracy is too low. "
+                "Please enable precise location "
+                "and retry."
+            ),
+        )
 
+    polygon = _tamam_building_polygon(
+        student.building_id,
+    )
+
+    is_inside = _inside_tamam_polygon(
+        payload.latitude,
+        payload.longitude,
+        polygon,
+    )
+
+    if not is_inside:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You are not inside your assigned "
+                "hostel building."
+            ),
+        )
+
+    return {
+        "inside": True,
+        "building_id": student.building_id,
+        "message": (
+            "Location verified. You are inside "
+            "your assigned hostel building."
+        ),
+    }
+
+@app.post("/student/tamam/check-in")
+def tamam_check_in(
+    payload: TamamCheckInRequest,
+    student: models.Student = Depends(
+        require_student,
+    ),
+    database: Session = Depends(
+        get_database,
+    ),
+):
+    # Check location accuracy again.
+    if payload.accuracy_m > TAMAM_MAX_ACCURACY_M:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Location accuracy is too low. "
+                "Please enable precise location "
+                "and retry."
+            ),
+        )
+
+    # Check the student's assigned building again.
+    polygon = _tamam_building_polygon(
+        student.building_id,
+    )
+
+    if not _inside_tamam_polygon(
+        payload.latitude,
+        payload.longitude,
+        polygon,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You are not inside your assigned "
+                "hostel building."
+            ),
+        )
+
+    # The student must enroll her face first.
+    if not student.face_image:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Enroll your face in your "
+                "student profile first."
+            ),
+        )
+
+        # Use the current UAE date.
+    uae_timezone = timezone(
+        timedelta(hours=4)
+    )
+
+    now_in_uae = datetime.now(
+        uae_timezone
+    )
+
+    record_date = (
+        now_in_uae.date().isoformat()
+    )
+
+    tamam_record = (
+        database.query(models.TamamRecord)
+        .filter(
+            models.TamamRecord.student_id
+            == student.id,
+            models.TamamRecord.record_date
+            == record_date,
+        )
+        .first()
+    )
+
+    if (
+        tamam_record is not None
+        and tamam_record.status == "completed"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Your Tamam attendance has "
+                "already been recorded today."
+            ),
+        )
+
+    # Connect to the face-verification service.
+    engine_url = os.getenv(
+        "FACE_ENGINE_URL",
+        "",
+    ).strip()
+
+    if not engine_url:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Face verification service "
+                "is not configured."
+            ),
+        )
+
+    headers = {
+        "Content-Type": "application/json",
+    }
+
+    engine_token = os.getenv(
+        "FACE_ENGINE_TOKEN",
+        "",
+    ).strip()
+
+    if engine_token:
+        headers["X-Face-Engine-Token"] = (
+            engine_token
+        )
+
+    face_request = urllib.request.Request(
+        engine_url,
+        data=json.dumps(
+            {
+                "source": "website",
+                "face_image": payload.face_image,
+                "expected_code": (
+                    student.university_id
+                ),
+            }
+        ).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(
+            face_request,
+            timeout=45,
+        ) as response:
+            face_result = json.loads(
+                response.read().decode("utf-8")
+            )
+
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        ValueError,
+    ) as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Face verification service "
+                "is unavailable."
+            ),
+        ) from error
+
+    if (
+        face_result.get("verified") is not True
+        or face_result.get("subject_code")
+        != student.university_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Face verification failed.",
+        )
+
+    # Save Tamam after location and face succeed.
+      # Create today's record if it does not exist.
+    if tamam_record is None:
+        tamam_record = models.TamamRecord(
+            student_id=student.id,
+            record_date=record_date,
+            status="not_completed",
+        )
+
+        database.add(tamam_record)
+
+    # Complete today's Tamam record.
+    tamam_record.status = "completed"
+
+    tamam_record.verification_method = (
+        "face_and_location"
+    )
+
+    tamam_record.completed_at = (
+        datetime.utcnow()
+    )
+
+    database.commit()
+    database.refresh(tamam_record)
+
+    return {
+        "success": True,
+        "status": tamam_record.status,
+        "message": (
+            "Your Tamam attendance has "
+            "been recorded successfully."
+        ),
+        "completed_at": (
+            tamam_record.completed_at
+            .replace(tzinfo=timezone.utc)
+            .isoformat()
+        ),
+    }
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_frontend(full_path: str):
     if FRONTEND_DIST.exists() and full_path:

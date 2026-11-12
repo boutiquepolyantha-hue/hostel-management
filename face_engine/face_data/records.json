@@ -1,0 +1,92 @@
+{
+  "U20260008": {
+    "code": "U20260008",
+    "type": "student",
+    "image": "e62a69752837abbb4e418da1c1b9f798ff5e0ca3a370d9677e6415991766046c.png"
+  },
+  "PENDING-5E3A8A560DD6": {
+    "code": "PENDING-5E3A8A560DD6",
+    "type": "guardian",
+    "image": "dc3b527421d3dfd46842ef384141a209ef1e81b900e3c1be01b82cb72f9100b2.png"
+  },
+  "G-00004": {
+    "code": "G-00004",
+    "type": "guardian",
+    "image": "5fd49d8f15df54fc76f31950fe781832c3ddcfc6f7cf3920e0209f14419eeb01.png"
+  },
+  "U20260002": {
+    "code": "U20260002",
+    "type": "student",
+    "image": "bea1aa87db94a89c0a328a3002d50f3a1e43a03c893bc7682f60fc141762a921.png"
+  },
+  "G-00002": {
+    "code": "G-00002",
+    "type": "guardian",
+    "image": "e1561f5b9879a099bb99df21f153ae19cba80feee2c52df9b46ec5429cee5152.png"
+  },
+  "PENDING-4008FFF89DB7": {
+    "code": "PENDING-4008FFF89DB7",
+    "type": "guardian",
+    "image": "b4d43eb8bd231520d1bed0e8ec156a23f1707f471f0932c9ad642696654e8cc8.png"
+  },
+  "G-00005": {
+    "code": "G-00005",
+    "type": "guardian",
+    "image": "ba2203a074f94890ae4853a9086e7f0cbbb40993bb4a6e05f539e2ee6f875570.png"
+  },
+  "U20260001": {
+    "code": "U20260001",
+    "type": "student",
+    "image": "e2fa20c4261befb0417e5405c7b4a3074ad31f6d9b9df93a0413c69e03b22c48.png"
+  },
+  "PENDING-1E04F51748": {
+    "code": "PENDING-1E04F51748",
+    "type": "guardian",
+    "image": "8acf7a1e206a0b3d50b1f20fa8011b26de540db2bee796adf289feb067fadf11.png"
+  },
+  "PENDING-3FE69E5682D3": {
+    "code": "PENDING-3FE69E5682D3",
+    "type": "guardian",
+    "image": "b005e42fdb74f7bd14808c4da081631900fe7b35d15724ea919969ee3139d83e.png"
+  },
+  "G-00602": {
+    "code": "G-00602",
+    "type": "guardian",
+    "image": "20985cab3a3b3cdac69ac26043a12bb510eff7e7e6432643cdf05d6a26976611.png"
+  },
+  "PENDING-EC022B8CEAB1": {
+    "code": "PENDING-EC022B8CEAB1",
+    "type": "guardian",
+    "image": "e6d75c677abbc572e514921f64815046d04363e45fc2928f67a0e63fee2898c4.png"
+  },
+  "U20260306": {
+    "code": "U20260306",
+    "type": "student",
+    "image": "3b365945af359e4fa873f194a5c3c15b85961eccd1e16e321a10bb463b1d6d9f.png"
+  },
+  "G-00603": {
+    "code": "G-00603",
+    "type": "guardian",
+    "image": "4de2f2587598167fcc7184c5ffa74576ab85cc648475e3e53d767fcd5314e7e8.png"
+  },
+  "PENDING-5B1C4E9E1315": {
+    "code": "PENDING-5B1C4E9E1315",
+    "type": "guardian",
+    "image": "1b4b4efb772bb36ea7f3caa894c251a4a961d83150d411bf8a97578e2516ad77.png"
+  },
+  "PENDING-4B7880F04987": {
+    "code": "PENDING-4B7880F04987",
+    "type": "guardian",
+    "image": "aa70e0d92cdac9bdfe3412a99e78baeb91a88963aaa7eaed7e1912067471a908.png"
+  },
+  "G-00604": {
+    "code": "G-00604",
+    "type": "guardian",
+    "image": "e541121f20c4f9404dc8268d3336c0eb470428f0b75b46db2db237913c2c4d34.png"
+  },
+  "PENDING-477761CAA849": {
+    "code": "PENDING-477761CAA849",
+    "type": "guardian",
+    "image": "f1fb538cd9eb77b668bd0bd343c86d90757cf2cef1001eb21768534f4f27d8eb.png"
+  }
+}
