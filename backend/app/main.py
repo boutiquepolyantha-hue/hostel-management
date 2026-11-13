@@ -3323,8 +3323,11 @@ def bus_trips(
     database: Session = Depends(get_database),
 ):
     assert_assignment(database, supervisor, building_id)
-    query = database.query(models.BusTrip).filter( 
-    models.BusTrip.building_id == 1)
+    # Respect the building selected in the administration UI.  The old
+    # hard-coded Building 1 filter made Building 2 appear empty.
+    query = database.query(models.BusTrip).filter(
+        models.BusTrip.building_id == building_id
+    )
     if record_date:
         query = query.filter(func.date(models.BusTrip.departure_at) == record_date)
     trips = query.order_by(models.BusTrip.id).all()    
