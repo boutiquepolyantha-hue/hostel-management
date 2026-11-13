@@ -608,7 +608,7 @@ def seed_hosted_demo_data(
             student_id=student.id,
             record_date=tamam_date,
             status="completed" if completed else "not_completed",
-            verification_method=randomizer.choice(["face", "card", "fingerprint"]) if completed else None,
+            verification_method="face" if completed else None,
             completed_at=now - timedelta(days=randomizer.randrange(0, 31)) if completed else None,
         ))
 
@@ -3131,9 +3131,7 @@ def tamam(
             record.status = "completed"
 
             if not record.verification_method:
-                record.verification_method = (
-                    "fingerprint"
-                )
+                record.verification_method = "face"
 
             if record.completed_at is None:
                 record.completed_at = (
@@ -3158,11 +3156,7 @@ def tamam(
                     if is_past_date
                     else "not_completed"
                 ),
-                verification_method=(
-                    "fingerprint"
-                    if is_past_date
-                    else None
-                ),
+                verification_method=("face" if is_past_date else None),
                 completed_at=(
                     past_completion_time
                     if is_past_date
@@ -3495,6 +3489,11 @@ def fingerprint_scan(
     supervisor: models.Supervisor = Depends(require_supervisor),
     database: Session = Depends(get_database),
 ):
+    raise HTTPException(
+        status_code=410,
+        detail="Fingerprint verification is disabled for Tamam. Use face verification and location check.",
+    )
+
     try:
         fingerprint_id = int(payload.get("fingerprint_id"))
     except (TypeError, ValueError):

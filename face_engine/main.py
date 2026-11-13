@@ -253,11 +253,6 @@ def verify(
             continue
         if (
             not payload.expected_code
-            and not code.startswith("G-")):
-           continue
-
-        if (
-            not payload.expected_code
             and record["type"] != "guardian"
         ):
             continue
