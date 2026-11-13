@@ -11,7 +11,15 @@ if DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
-engine_options = {"pool_pre_ping": True}
+engine_options = {
+    "pool_pre_ping": True,
+    # Supabase shared session mode has a small connection limit. Keep the
+    # Render service well below that limit, including during redeploys.
+    "pool_size": 2,
+    "max_overflow": 0,
+    "pool_timeout": 30,
+    "pool_recycle": 300,
+}
 if DATABASE_URL.startswith("sqlite"):
     engine_options["connect_args"] = {"check_same_thread": False}
 engine = create_engine(DATABASE_URL, **engine_options)
