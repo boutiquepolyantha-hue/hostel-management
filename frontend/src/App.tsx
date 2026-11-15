@@ -56,7 +56,6 @@ const UAE_CITIES = [
   "Ruwais",
   "Ghayathi",
 ];
-let tamamResetHandled = false;
 function StatusBadge({ value }: { value: string }) {
   const normalized = value.toLowerCase();
   const tone =
@@ -2186,49 +2185,6 @@ function Tamam({ buildingId }: { buildingId: number }) {
   const [filter, setFilter] = useState("all");
   const [recordDate, setRecordDate] = useState("");
   const [city, setCity] = useState("");
-    useEffect(() => {
-  const navigation =
-    performance.getEntriesByType(
-      "navigation",
-    )[0] as
-      | PerformanceNavigationTiming
-      | undefined;
-
-  if (navigation?.type !== "reload") {
-    return;
-  }
-
-  void api(
-    `/buildings/${buildingId}/tamam-demo-reset`,
-    {
-      method: "POST",
-    },
-  );
-}, [buildingId]);
-useEffect(() => {
-  const navigation =
-    performance.getEntriesByType(
-      "navigation",
-    )[0] as
-      | PerformanceNavigationTiming
-      | undefined;
-
-  if (
-    navigation?.type !== "reload" ||
-    tamamResetHandled
-  ) {
-    return;
-  }
-
-  tamamResetHandled = true;
-
-  void api(
-    `/buildings/${buildingId}/tamam-demo-reset`,
-    {
-      method: "POST",
-    },
-  );
-}, [buildingId]);
   useEffect(() => {
     const loadTamam = () => {
       api<TamamData>(
