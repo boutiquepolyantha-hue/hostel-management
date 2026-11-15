@@ -990,8 +990,87 @@ button.leave {
 }
 
 @media (max-width: 600px) {
+  html, body, #root {
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .student-app-background {
+    min-height: 100dvh;
+  }
+
+  .student-mobile-shell {
+    width: 100%;
+    min-height: 100dvh;
+    padding-bottom: calc(92px + env(safe-area-inset-bottom));
+    overflow: hidden;
+  }
+
   .student-screen-content {
-    padding: 25px 16px 15px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 24px 16px calc(118px + env(safe-area-inset-bottom));
+  }
+
+  .student-welcome {
+    margin-bottom: 22px;
+  }
+
+  .student-welcome h1 {
+    max-width: 100%;
+    font-size: clamp(1.55rem, 7vw, 2.15rem);
+    line-height: 1.08;
+    overflow-wrap: anywhere;
+  }
+
+  .student-welcome p {
+    font-size: .95rem;
+  }
+
+  .residence-status {
+    width: 100%;
+    box-sizing: border-box;
+    align-items: center;
+  }
+
+  .student-service-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  button.student-service-card,
+  .access-service {
+    min-width: 0;
+    margin-bottom: 0;
+    padding: 18px;
+    gap: 12px;
+  }
+
+  .student-service-card strong,
+  .student-service-card small {
+    overflow-wrap: anywhere;
+  }
+
+  .student-access-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .student-access-actions button {
+    min-width: 0;
+    padding: 8px 6px;
+    font-size: .78rem;
+  }
+
+  .student-bottom-nav {
+    min-height: calc(78px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .student-bottom-nav button {
+    min-width: 0;
+    font-size: .7rem;
   }
 
   .student-login-card {
@@ -1057,6 +1136,21 @@ button.leave {
 
   .kiosk-card {
     padding: 28px 18px;
+  }
+}
+
+@media (max-width: 390px) {
+  .student-screen-content {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .student-access-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .student-service-card strong {
+    font-size: 1.05rem;
   }
 }
 
