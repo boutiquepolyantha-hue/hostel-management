@@ -1795,11 +1795,20 @@ function FaceCapture({ label, onCapture }: { label: string; onCapture: (image: s
   async function startCamera() {
     setError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera access requires HTTPS or localhost.");
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
       streamRef.current = stream;
       setRunning(true);
-    } catch {
-      setError("Camera permission was denied or this device has no camera.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Camera permission was denied or this device has no camera.");
     }
   }
 

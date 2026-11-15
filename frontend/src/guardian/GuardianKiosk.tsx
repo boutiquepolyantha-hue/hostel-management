@@ -30,6 +30,30 @@ interface BatchResult {
 
 const steps = ["Verify Identity", "Select Students", "Choose Action", "Request Sent"];
 
+async function openCompatibleCamera(deviceId?: string) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Camera access requires HTTPS or localhost.");
+  }
+  if (deviceId) {
+    return navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId } },
+      audio: false,
+    });
+  }
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "user" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+  } catch {
+    return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  }
+}
+
 export function GuardianKiosk() {
   const [step, setStep] = useState(1);
   const [guardian, setGuardian] = useState<Guardian | null>(null);
@@ -55,8 +79,7 @@ export function GuardianKiosk() {
       return;
     }
     try {
-      const video = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" };
-      const stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      const stream = await openCompatibleCamera(deviceId);
       streamRef.current = stream;
       setCamera(true);
       const devices = await navigator.mediaDevices.enumerateDevices();

@@ -41,6 +41,30 @@ import { api } from "../api";
 import { ChatAssistant } from "../ChatAssistant";
 import "./student.css";
 
+// Support phones, laptops, USB webcams, and Raspberry Pi camera drivers.
+// Some Pi browsers do not expose a front-facing camera, so retry with a
+// generic video constraint when the preferred camera constraint is rejected.
+async function openFaceCamera(): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Camera access requires HTTPS or localhost.");
+  }
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "user" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+  } catch {
+    return navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false,
+    });
+  }
+}
+
 
 interface GuardianSummary {
   id: number;
@@ -452,10 +476,7 @@ function FaceAndQrPage({ student }: { student: StudentProfileData }) {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
-        audio: false,
-      });
+      const stream = await openFaceCamera();
       streamRef.current = stream;
       setCameraActive(true);
       requestAnimationFrame(async () => {
@@ -532,9 +553,9 @@ function FaceAndQrPage({ student }: { student: StudentProfileData }) {
             )}
             {error && <div className="student-error">{error}</div>}
             <small>
-              This starter connects the camera and secure workflow. Replace the
-              demonstration verification endpoint with the Raspberry Pi face
-              matching service before production.
+              Camera capture supports phones, laptops, USB webcams, and
+              Raspberry Pi cameras. The backend must have FACE_ENGINE_URL
+              pointed to the running face engine.
             </small>
           </section>
         ) : (
@@ -631,7 +652,7 @@ const [passwordError, setPasswordError] =
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      const stream = await openFaceCamera();
       streamRef.current = stream;
       setCameraActive(true);
       requestAnimationFrame(async () => { if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => null); } });
@@ -926,7 +947,7 @@ function GuardianManagementPage({ student }: { student: StudentProfileData }) {
     setError("");
     if (!navigator.mediaDevices?.getUserMedia) { setError("Camera is unavailable here. Open the app on localhost or HTTPS, then allow camera access."); return; }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      const stream = await openFaceCamera();
       streamRef.current = stream; setCameraActive(true);
       requestAnimationFrame(async () => { if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => null); } });
     } catch (reason) {
@@ -1415,14 +1436,7 @@ function StudentTamamPage({
         );
       }
 
-      const stream =
-        await navigator.mediaDevices
-          .getUserMedia({
-            video: {
-              facingMode: "user",
-            },
-            audio: false,
-          });
+      const stream = await openFaceCamera();
 
       streamRef.current = stream;
       setCameraActive(true);
