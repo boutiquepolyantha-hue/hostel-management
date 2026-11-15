@@ -2406,8 +2406,11 @@ function Buses({ buildingId }: { buildingId: number }) {
           rows={passengers.map((passenger) => ({ ...passenger,
           city: selectedTrip?.destination ?? passenger.city,
            }))}
-          extraHeaders={["Verification", "Boarding status", "Time"]}
+        extraHeaders={["Dorm status", "Verification", "Boarding status", "Time"]}
           extraCells={(row) => [
+            <StatusBadge
+              value={row.current_status === "inside" ? "Inside dorm" : "Outside dorm"}
+            />,
             row.verification_method === "card_verification" ? "Card verification" : "—",
             <StatusBadge value={row.boarding_status} />,
             row.boarded_at ? formatTime(row.boarded_at) : "—",
