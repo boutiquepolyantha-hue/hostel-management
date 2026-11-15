@@ -3644,6 +3644,10 @@ def rfid_scan(
     passenger.status = "boarded"
     passenger.verification_method = "card_verification"
     passenger.boarded_at = datetime.utcnow()
+    # Boarding means the student has left the residence. Keep the student's
+    # live dorm-status field in sync with the bus passenger record so every
+    # dashboard (and the passenger list) immediately shows "Outside dorm".
+    student.current_status = "outside"
     database.commit()
 
     counts_query = (

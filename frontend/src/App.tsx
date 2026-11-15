@@ -2409,7 +2409,11 @@ function Buses({ buildingId }: { buildingId: number }) {
         extraHeaders={["Dorm status", "Verification", "Boarding status", "Time"]}
           extraCells={(row) => [
             <StatusBadge
-              value={row.current_status === "inside" ? "Inside dorm" : "Outside dorm"}
+              value={
+                row.boarding_status === "boarded" || row.current_status !== "inside"
+                  ? "Outside dorm"
+                  : "Inside dorm"
+              }
             />,
             row.verification_method === "card_verification" ? "Card verification" : "—",
             <StatusBadge value={row.boarding_status} />,
