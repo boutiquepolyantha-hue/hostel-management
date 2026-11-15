@@ -3339,8 +3339,6 @@ def bus_trips(
             .filter(
                 models.BusPassenger.trip_id
                 == trip.id,
-                models.Student.current_status
-                == "inside",
                 models.Student.is_active.is_(
                     True
                 ),
@@ -3362,8 +3360,6 @@ def bus_trips(
                 == trip.id,
                 models.BusPassenger.status
                 == "boarded",
-                models.Student.current_status
-                == "inside",
                 models.Student.is_active.is_(
                     True
                 ),
@@ -3411,8 +3407,6 @@ def bus_passengers(
         .filter(
             models.BusPassenger.trip_id
             == trip_id,
-            models.Student.current_status
-            == "inside",
             models.Student.is_active.is_(
                 True
             ),
@@ -3606,16 +3600,29 @@ def rfid_scan(
             "student": student.full_name,
         }
 
-    passenger = (
+    requested_trip_id = payload.get("trip_id")
+    passenger_query = (
         database.query(models.BusPassenger)
         .join(
             models.BusTrip,
             models.BusPassenger.trip_id == models.BusTrip.id,
         )
-        .filter(models.BusPassenger.student_id == student.id)
-        .order_by(models.BusTrip.id)
-        .first()
+        .filter(
+            models.BusPassenger.student_id == student.id,
+            models.BusTrip.destination == student.city,
+        )
     )
+    if requested_trip_id is not None:
+        try:
+            passenger_query = passenger_query.filter(
+                models.BusPassenger.trip_id == int(requested_trip_id)
+            )
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid trip_id")
+    passenger = passenger_query.order_by(
+        models.BusTrip.departure_at.desc(),
+        models.BusTrip.id.desc(),
+    ).first()
 
     if passenger is None:
         raise HTTPException(
@@ -3648,7 +3655,6 @@ def rfid_scan(
         .filter(
             models.BusPassenger.trip_id == trip.id,
             models.Student.is_active.is_(True),
-            models.Student.current_status == "inside",
         )
     )
 
